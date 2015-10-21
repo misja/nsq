@@ -1,0 +1,13 @@
+#!/bin/sh
+
+set -eu
+
+USER=nsq
+GROUP=nsq
+
+if [ ! -d /var/lib/nsq ]; then
+    mkdir -p /var/lib/nsq
+    chown $USER:$GROUP /var/lib/nsq
+fi
+
+#DEBHELPER#

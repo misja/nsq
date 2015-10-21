@@ -1,0 +1,46 @@
+Source: nsq
+Section: database
+Priority: extra
+Maintainer: Misja Hoebe <misja.hoebe@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), dh-exec (>= 0.12), golang-go (>= 1.4.2)
+Standards-Version: 3.9.6
+Homepage: http://nsq.io/
+Vcs-Git: https://github.com/nsqio/nsq.git
+Vcs-Browser: https://github.com/nsqio/nsq
+
+Package: nsq-common
+Architecture: all
+Depends: ${misc:Depends}
+Description: NSQ is a realtime distributed messaging platform.
+ .
+ This package contains base configuration used by nsq-server, 
+ nsq-lookup and nsq-admin.
+
+Package: nsq-server
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, nsq-common
+Description: NSQ is a realtime distributed messaging platform.
+ .
+ This package contains the nsqd service.
+
+Package: nsq-lookup
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, nsq-common
+Description: NSQ is a realtime distributed messaging platform.
+ .
+ This package contains the nsqlookupd service.
+
+Package: nsq-admin
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, nsq-common
+Description: NSQ is a realtime distributed messaging platform.
+ .
+ This package contains the nsqadmin admin interface.
+
+Package: nsq-tools
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: NSQ is a realtime distributed messaging platform.
+ .
+ This package contains nsq_pubsub, nsq_to_file, to_nsq, nsq_stat, 
+ nsq_to_http, nsq_tail and nsq_to_nsq

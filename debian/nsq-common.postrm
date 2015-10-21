@@ -1,0 +1,17 @@
+#!/bin/sh
+
+set -e
+
+USER=nsq
+GROUP=nsq
+
+if [ "$1" = "purge" ] 
+	then
+		rm -rf /etc/$USER
+		rm -rf /var/lib/$USER
+
+        deluser --system $USER || true
+        delgroup --system --only-if-empty $GROUP || true
+fi
+
+#DEBHELPER#

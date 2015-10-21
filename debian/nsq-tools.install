@@ -1,0 +1,8 @@
+#!/usr/bin/dh-exec
+build/apps/nsq_pubsub => /usr/bin/nsq_pubsub
+build/apps/nsq_to_file => /usr/bin/nsq_to_file
+build/apps/to_nsq => /usr/bin/to_nsq
+build/apps/nsq_stat => /usr/bin/nsq_stat
+build/apps/nsq_to_http => /usr/bin/nsq_to_http
+build/apps/nsq_tail => /usr/bin/sq_tail
+build/apps/nsq_to_nsq => /usr/bin/nsq_to_nsq

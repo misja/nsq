@@ -1,0 +1,3 @@
+#!/usr/bin/dh-exec
+build/apps/nsqadmin => /usr/bin/nsqadmin
+contrib/nsqadmin.cfg.example => etc/nsq/nsqadmin.conf

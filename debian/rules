@@ -1,0 +1,26 @@
+#!/usr/bin/make -f
+
+export DH_OPTIONS
+export GOPATH=$(CURDIR)/.godeps:$(CURDIR)
+GODIR=src/github.com/nsqio
+
+%:
+    ifeq "$(wildcard $(CURDIR)/.godeps )" ""
+		$(CURDIR)/debian/util/gpm install
+    endif
+
+    ifeq "$(wildcard $(GODIR) )" ""
+		mkdir -p $(GODIR)
+		ln -s ../../../ $(GODIR)/nsq
+    endif
+
+	dh $@
+
+override_dh_auto_build:
+	cd $(GODIR)/nsq && make
+
+override_dh_strip:
+
+clean:
+	rm -rf $(CURDIR)/{.godeps,src}
+	dh $@
