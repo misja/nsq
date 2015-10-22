@@ -17,7 +17,7 @@ GODIR=src/github.com/nsqio
 	dh $@
 
 override_dh_auto_build:
-	cd $(GODIR)/nsq && make
+	cd $(GODIR)/nsq && make CGO_ENABLED=1 GOFLAGS="-ldflags '-s'"
 
 override_dh_strip:
 
