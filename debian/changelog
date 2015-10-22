@@ -2,7 +2,7 @@ nsq (0.3.6-1) stable; urgency=low
 
   * Correct minimal dh-exec version build dependency
 
- -- Misja Hoebe <misja.hoebe@gmail.com>  Mon, 12 Oct 2015 15:14:56 +0100
+ -- Misja Hoebe <misja.hoebe@gmail.com>  Mon, 12 Oct 2015 16:14:56 +0100
 
 nsq (0.3.6) stable; urgency=low
 
