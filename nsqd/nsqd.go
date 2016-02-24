@@ -19,6 +19,7 @@ import (
 
 	"github.com/bitly/go-simplejson"
 	"github.com/nsqio/nsq/internal/clusterinfo"
+	"github.com/nsqio/nsq/internal/dirlock"
 	"github.com/nsqio/nsq/internal/http_api"
 	"github.com/nsqio/nsq/internal/protocol"
 	"github.com/nsqio/nsq/internal/statsd"
@@ -32,10 +33,9 @@ const (
 	TLSRequired
 )
 
-const (
-	flagHealthy = 1 << iota
-	flagLoading
-)
+type errStore struct {
+	err error
+}
 
 type NSQD struct {
 	// 64bit atomic vars need to be first for proper alignment on 32bit platforms
@@ -45,9 +45,9 @@ type NSQD struct {
 
 	opts atomic.Value
 
-	flag      int32
-	errMtx    sync.RWMutex
-	err       error
+	dl        *dirlock.DirLock
+	isLoading int32
+	errValue  atomic.Value
 	startTime time.Time
 
 	topicMap map[string]*Topic
@@ -71,8 +71,13 @@ type NSQD struct {
 }
 
 func New(opts *Options) *NSQD {
+	dataPath := opts.DataPath
+	if opts.DataPath == "" {
+		cwd, _ := os.Getwd()
+		dataPath = cwd
+	}
+
 	n := &NSQD{
-		flag:                 flagHealthy,
 		startTime:            time.Now(),
 		topicMap:             make(map[string]*Topic),
 		idChan:               make(chan MessageID, 4096),
@@ -80,8 +85,16 @@ func New(opts *Options) *NSQD {
 		notifyChan:           make(chan interface{}),
 		optsNotificationChan: make(chan struct{}, 1),
 		ci:                   clusterinfo.New(opts.Logger, http_api.NewClient(nil)),
+		dl:                   dirlock.New(dataPath),
 	}
 	n.swapOpts(opts)
+	n.errValue.Store(errStore{})
+
+	err := n.dl.Lock()
+	if err != nil {
+		n.logf("FATAL: --data-path=%s in use (possibly by another instance of nsqd)", dataPath)
+		os.Exit(1)
+	}
 
 	if opts.MaxDeflateLevel < 1 || opts.MaxDeflateLevel > 9 {
 		n.logf("FATAL: --max-deflate-level must be [1,9]")
@@ -94,7 +107,8 @@ func New(opts *Options) *NSQD {
 	}
 
 	if opts.StatsdPrefix != "" {
-		_, port, err := net.SplitHostPort(opts.HTTPAddress)
+		var port string
+		_, port, err = net.SplitHostPort(opts.HTTPAddress)
 		if err != nil {
 			n.logf("ERROR: failed to parse HTTP address (%s) - %s", opts.HTTPAddress, err)
 			os.Exit(1)
@@ -168,49 +182,23 @@ func (n *NSQD) RealHTTPSAddr() *net.TCPAddr {
 	return n.httpsListener.Addr().(*net.TCPAddr)
 }
 
-func (n *NSQD) setFlag(f int32, b bool) {
-	for {
-		old := atomic.LoadInt32(&n.flag)
-		newFlag := old
-		if b {
-			newFlag |= f
-		} else {
-			newFlag &= ^f
-		}
-		if atomic.CompareAndSwapInt32(&n.flag, old, newFlag) {
-			return
-		}
-	}
-}
-
-func (n *NSQD) getFlag(f int32) bool {
-	return f&atomic.LoadInt32(&n.flag) != 0
-}
-
 func (n *NSQD) SetHealth(err error) {
-	n.errMtx.Lock()
-	defer n.errMtx.Unlock()
-	n.err = err
-	if err != nil {
-		n.setFlag(flagHealthy, false)
-	} else {
-		n.setFlag(flagHealthy, true)
-	}
+	n.errValue.Store(errStore{err: err})
 }
 
 func (n *NSQD) IsHealthy() bool {
-	return n.getFlag(flagHealthy)
+	return n.GetError() == nil
 }
 
 func (n *NSQD) GetError() error {
-	n.errMtx.RLock()
-	defer n.errMtx.RUnlock()
-	return n.err
+	errValue := n.errValue.Load()
+	return errValue.(errStore).err
 }
 
 func (n *NSQD) GetHealth() string {
-	if !n.IsHealthy() {
-		return fmt.Sprintf("NOK - %s", n.GetError())
+	err := n.GetError()
+	if err != nil {
+		return fmt.Sprintf("NOK - %s", err)
 	}
 	return "OK"
 }
@@ -274,8 +262,8 @@ func (n *NSQD) Main() {
 }
 
 func (n *NSQD) LoadMetadata() {
-	n.setFlag(flagLoading, true)
-	defer n.setFlag(flagLoading, false)
+	atomic.StoreInt32(&n.isLoading, 1)
+	defer atomic.StoreInt32(&n.isLoading, 0)
 	fn := fmt.Sprintf(path.Join(n.getOpts().DataPath, "nsqd.%d.dat"), n.getOpts().ID)
 	data, err := ioutil.ReadFile(fn)
 	if err != nil {
@@ -435,14 +423,24 @@ func (n *NSQD) Exit() {
 	// could potentially starve items in process and deadlock)
 	close(n.exitChan)
 	n.waitGroup.Wait()
+
+	n.dl.Unlock()
 }
 
 // GetTopic performs a thread safe operation
 // to return a pointer to a Topic object (potentially new)
 func (n *NSQD) GetTopic(topicName string) *Topic {
+	// most likely, we already have this topic, so try read lock first.
+	n.RLock()
+	t, ok := n.topicMap[topicName]
+	n.RUnlock()
+	if ok {
+		return t
+	}
+
 	n.Lock()
 
-	t, ok := n.topicMap[topicName]
+	t, ok = n.topicMap[topicName]
 	if ok {
 		n.Unlock()
 		return t
@@ -557,7 +555,7 @@ func (n *NSQD) Notify(v interface{}) {
 	// since the in-memory metadata is incomplete,
 	// should not persist metadata while loading it.
 	// nsqd will call `PersistMetadata` it after loading
-	persist := !n.getFlag(flagLoading)
+	persist := atomic.LoadInt32(&n.isLoading) == 0
 	n.waitGroup.Wrap(func() {
 		// by selecting on exitChan we guarantee that
 		// we do not block exit, see issue #123

@@ -82,7 +82,8 @@ func (p *protocolV2) IOLoop(conn net.Conn) error {
 			p.ctx.nsqd.logf("PROTOCOL(V2): [%s] %s", client, params)
 		}
 
-		response, err := p.Exec(client, params)
+		var response []byte
+		response, err = p.Exec(client, params)
 		if err != nil {
 			ctx := ""
 			if parentErr := err.(protocol.ChildErr).Parent(); parentErr != nil {
@@ -92,6 +93,7 @@ func (p *protocolV2) IOLoop(conn net.Conn) error {
 
 			sendErr := p.Send(client, frameTypeError, []byte(err.Error()))
 			if sendErr != nil {
+				p.ctx.nsqd.logf("ERROR: [%s] - %s%s", client, sendErr, ctx)
 				break
 			}
 
@@ -142,7 +144,7 @@ func (p *protocolV2) SendMessage(client *clientV2, msg *Message, buf *bytes.Buff
 }
 
 func (p *protocolV2) Send(client *clientV2, frameType int32, data []byte) error {
-	client.Lock()
+	client.writeLock.Lock()
 
 	var zeroTime time.Time
 	if client.HeartbeatInterval > 0 {
@@ -153,7 +155,7 @@ func (p *protocolV2) Send(client *clientV2, frameType int32, data []byte) error 
 
 	_, err := protocol.SendFramedResponse(client.Writer, frameType, data)
 	if err != nil {
-		client.Unlock()
+		client.writeLock.Unlock()
 		return err
 	}
 
@@ -161,7 +163,7 @@ func (p *protocolV2) Send(client *clientV2, frameType int32, data []byte) error 
 		err = client.Flush()
 	}
 
-	client.Unlock()
+	client.writeLock.Unlock()
 
 	return err
 }
@@ -237,9 +239,9 @@ func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 			clientMsgChan = nil
 			flusherChan = nil
 			// force flush
-			client.Lock()
+			client.writeLock.Lock()
 			err = client.Flush()
-			client.Unlock()
+			client.writeLock.Unlock()
 			if err != nil {
 				goto exit
 			}
@@ -261,9 +263,9 @@ func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 			// if this case wins, we're either starved
 			// or we won the race between other channels...
 			// in either case, force flush
-			client.Lock()
+			client.writeLock.Lock()
 			err = client.Flush()
-			client.Unlock()
+			client.writeLock.Unlock()
 			if err != nil {
 				goto exit
 			}
@@ -896,9 +898,9 @@ func (p *protocolV2) TOUCH(client *clientV2, params [][]byte) ([]byte, error) {
 		return nil, protocol.NewFatalClientErr(nil, "E_INVALID", err.Error())
 	}
 
-	client.RLock()
+	client.writeLock.RLock()
 	msgTimeout := client.MsgTimeout
-	client.RUnlock()
+	client.writeLock.RUnlock()
 	err = client.Channel.TouchMessage(client.ID, *id, msgTimeout)
 	if err != nil {
 		return nil, protocol.NewClientErr(err, "E_TOUCH_FAILED",

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -95,13 +96,24 @@ func newHTTPServer(ctx *context, tlsEnabled bool, tlsRequired bool) *httpServer 
 	router.HandlerFunc("GET", "/debug/pprof/", pprof.Index)
 	router.HandlerFunc("GET", "/debug/pprof/cmdline", pprof.Cmdline)
 	router.HandlerFunc("GET", "/debug/pprof/symbol", pprof.Symbol)
+	router.HandlerFunc("POST", "/debug/pprof/symbol", pprof.Symbol)
 	router.HandlerFunc("GET", "/debug/pprof/profile", pprof.Profile)
 	router.Handler("GET", "/debug/pprof/heap", pprof.Handler("heap"))
 	router.Handler("GET", "/debug/pprof/goroutine", pprof.Handler("goroutine"))
 	router.Handler("GET", "/debug/pprof/block", pprof.Handler("block"))
+	router.Handle("PUT", "/debug/setblockrate", http_api.Decorate(setBlockRateHandler, log, http_api.PlainText))
 	router.Handler("GET", "/debug/pprof/threadcreate", pprof.Handler("threadcreate"))
 
 	return s
+}
+
+func setBlockRateHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	rate, err := strconv.Atoi(req.FormValue("rate"))
+	if err != nil {
+		return nil, http_api.Err{http.StatusBadRequest, fmt.Sprintf("invalid block rate : %s", err.Error())}
+	}
+	runtime.SetBlockProfileRate(rate)
+	return nil, nil
 }
 
 func (s *httpServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -213,7 +225,8 @@ func (s *httpServer) doPUB(w http.ResponseWriter, req *http.Request, ps httprout
 
 	var deferred time.Duration
 	if ds, ok := reqParams["defer"]; ok {
-		di, err := strconv.ParseInt(ds[0], 10, 64)
+		var di int64
+		di, err = strconv.ParseInt(ds[0], 10, 64)
 		if err != nil {
 			return nil, http_api.Err{400, "INVALID_DEFER"}
 		}
@@ -264,7 +277,8 @@ func (s *httpServer) doMPUB(w http.ResponseWriter, req *http.Request, ps httprou
 		rdr := bufio.NewReader(io.LimitReader(req.Body, readMax))
 		total := 0
 		for !exit {
-			block, err := rdr.ReadBytes('\n')
+			var block []byte
+			block, err = rdr.ReadBytes('\n')
 			if err != nil {
 				if err != io.EOF {
 					return nil, http_api.Err{500, "INTERNAL_ERROR"}
