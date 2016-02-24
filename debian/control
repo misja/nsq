@@ -2,7 +2,7 @@ Source: nsq
 Section: database
 Priority: extra
 Maintainer: Misja Hoebe <misja.hoebe@gmail.com>
-Build-Depends: debhelper (>= 9.0.0), dh-exec (>= 0.12), golang-go (>= 1.4.2)
+Build-Depends: debhelper (>= 9.0.0), dh-exec (>= 0.12), golang-go (>= 1.6)
 Standards-Version: 3.9.6
 Homepage: http://nsq.io/
 Vcs-Git: https://github.com/nsqio/nsq.git

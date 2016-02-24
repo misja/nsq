@@ -1,3 +1,9 @@
+nsq (0.3.7) stable; urgency=low
+
+  * New upstream release
+
+-- Misja Hoebe <misja.hoebe@gmail.com>  Wed, 24 Feb 2016 19:51:23 +0100
+
 nsq (0.3.6-1) stable; urgency=low
 
   * Correct minimal dh-exec version build dependency
