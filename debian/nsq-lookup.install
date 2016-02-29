@@ -1,3 +1,3 @@
 #!/usr/bin/dh-exec
-build/apps/nsqlookupd => /usr/bin/nsqlookupd
+build/nsqlookupd => /usr/bin/nsqlookupd
 contrib/nsqlookupd.cfg.example => etc/nsq/nsqlookupd.conf
