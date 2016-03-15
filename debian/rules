@@ -4,23 +4,27 @@ export DH_OPTIONS
 export GOPATH=$(CURDIR)/.godeps:$(CURDIR)
 GODIR=src/github.com/nsqio
 
+define get_go_deps
+    if [ ! -d $(CURDIR)/.godeps ]; then \
+        $(CURDIR)/debian/util/gpm install; \
+    fi
+    if [ ! -d $(GODIR) ]; then \
+        mkdir -p $(GODIR); ln -s ../../../ $(GODIR)/nsq; \
+    fi
+endef
+
 %:
-    ifeq "$(wildcard $(CURDIR)/.godeps )" ""
-		$(CURDIR)/debian/util/gpm install
-    endif
-
-    ifeq "$(wildcard $(GODIR) )" ""
-		mkdir -p $(GODIR)
-		ln -s ../../../ $(GODIR)/nsq
-    endif
-
+	$(call get_go_deps)
 	dh $@
+
+get-go-deps:
+	$(call get_go_deps)
+
+clean-go-deps:
+	rm -rf $(CURDIR)/src
+	rm -rf $(CURDIR)/.godeps
 
 override_dh_auto_build:
-	cd $(GODIR)/nsq && make CGO_ENABLED=1 GOFLAGS="-ldflags '-s'"
+	cd $(GODIR)/nsq && make CGO_ENABLED=1 GOFLAGS="-ldflags '-w -s'"
 
 override_dh_strip:
-
-clean:
-	rm -rf $(CURDIR)/{.godeps,src}
-	dh $@
