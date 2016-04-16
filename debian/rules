@@ -15,7 +15,7 @@ endef
 
 %:
 	$(call get_go_deps)
-	dh $@
+	dh $@ --with systemd
 
 get-go-deps:
 	$(call get_go_deps)
