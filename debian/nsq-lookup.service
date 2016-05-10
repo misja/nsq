@@ -3,7 +3,7 @@ Description=Realtime distributed messaging (nsqlookupd)
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/nsqlookupd -c /etc/nsq/nsqlookupd.conf
+ExecStart=/usr/bin/nsqlookupd -config /etc/nsq/nsqlookupd.conf
 Restart=always
 User=nsq
 Group=nsq
