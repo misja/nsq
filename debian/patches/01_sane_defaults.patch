@@ -1,0 +1,52 @@
+--- a/contrib/nsqadmin.cfg.example
++++ b/contrib/nsqadmin.cfg.example
+@@ -1,5 +1,5 @@
+ ## <addr>:<port> to listen on for HTTP clients
+-http_address = "0.0.0.0:4171"
++http_address = "127.0.0.1:4171"
+ 
+ ## graphite HTTP address
+ graphite_url = ""
+--- a/contrib/nsqd.cfg.example
++++ b/contrib/nsqd.cfg.example
+@@ -5,13 +5,13 @@
+ # id = 5150
+ 
+ ## <addr>:<port> to listen on for TCP clients
+-tcp_address = "0.0.0.0:4150"
++tcp_address = "127.0.0.1:4150"
+ 
+ ## <addr>:<port> to listen on for HTTP clients
+-http_address = "0.0.0.0:4151"
++http_address = "127.0.0.1:4151"
+ 
+ ## <addr>:<port> to listen on for HTTPS clients
+-# https_address = "0.0.0.0:4152"
++# https_address = "127.0.0.1:4152"
+ 
+ ## address that will be registered with lookupd (defaults to the OS hostname)
+ # broadcast_address = ""
+@@ -23,7 +23,7 @@
+ 
+ 
+ ## path to store disk-backed messages
+-# data_path = "/var/lib/nsq"
++data_path = "/var/lib/nsq"
+ 
+ ## number of messages to keep in memory (per topic/channel)
+ mem_queue_size = 10000
+--- a/contrib/nsqlookupd.cfg.example
++++ b/contrib/nsqlookupd.cfg.example
+@@ -3,10 +3,10 @@
+ 
+ 
+ ## <addr>:<port> to listen on for TCP clients
+-tcp_address = "0.0.0.0:4160"
++tcp_address = "127.0.0.1:4160"
+ 
+ ## <addr>:<port> to listen on for HTTP clients
+-http_address = "0.0.0.0:4161"
++http_address = "127.0.0.1:4161"
+ 
+ ## address that will be registered with lookupd (defaults to the OS hostname)
+ # broadcast_address = ""
