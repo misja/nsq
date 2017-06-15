@@ -2,9 +2,9 @@ package clusterinfo
 
 import (
 	"encoding/json"
-	"fmt"
+	"net"
 	"sort"
-	"strings"
+	"strconv"
 	"time"
 
 	"github.com/blang/semver"
@@ -77,11 +77,11 @@ func (p *Producer) Address() string {
 }
 
 func (p *Producer) HTTPAddress() string {
-	return fmt.Sprintf("%s:%d", p.BroadcastAddress, p.HTTPPort)
+	return net.JoinHostPort(p.BroadcastAddress, strconv.Itoa(p.HTTPPort))
 }
 
 func (p *Producer) TCPAddress() string {
-	return fmt.Sprintf("%s:%d", p.BroadcastAddress, p.TCPPort)
+	return net.JoinHostPort(p.BroadcastAddress, strconv.Itoa(p.TCPPort))
 }
 
 // IsInconsistent checks for cases where an unexpected number of nsqd connections are
@@ -191,7 +191,6 @@ func (c *ChannelStats) Add(a *ChannelStats) {
 type ClientStats struct {
 	Node              string        `json:"node"`
 	RemoteAddress     string        `json:"remote_address"`
-	Name              string        `json:"name"` // TODO: deprecated, remove in 1.0
 	Version           string        `json:"version"`
 	ClientID          string        `json:"client_id"`
 	Hostname          string        `json:"hostname"`
@@ -226,16 +225,6 @@ func (s *ClientStats) UnmarshalJSON(b []byte) error {
 	}
 	*s = ClientStats(ss)
 	s.ConnectedDuration = time.Now().Truncate(time.Second).Sub(time.Unix(s.ConnectTs, 0))
-
-	if s.ClientID == "" {
-		// TODO: deprecated, remove in 1.0
-		remoteAddressParts := strings.Split(s.RemoteAddress, ":")
-		port := remoteAddressParts[len(remoteAddressParts)-1]
-		if len(remoteAddressParts) < 2 {
-			port = "NA"
-		}
-		s.ClientID = fmt.Sprintf("%s:%s", s.Name, port)
-	}
 	return nil
 }
 

@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/mreiferson/go-snappystream"
+	"github.com/golang/snappy"
 	"github.com/nsqio/nsq/internal/auth"
 )
 
@@ -25,9 +25,6 @@ const (
 )
 
 type identifyDataV2 struct {
-	ShortID string `json:"short_id"` // TODO: deprecated, remove in 1.0
-	LongID  string `json:"long_id"`  // TODO: deprecated, remove in 1.0
-
 	ClientID            string `json:"client_id"`
 	Hostname            string `json:"hostname"`
 	HeartbeatInterval   int    `json:"heartbeat_interval"`
@@ -156,20 +153,9 @@ func (c *clientV2) String() string {
 func (c *clientV2) Identify(data identifyDataV2) error {
 	c.ctx.nsqd.logf("[%s] IDENTIFY: %+v", c, data)
 
-	// TODO: for backwards compatibility, remove in 1.0
-	hostname := data.Hostname
-	if hostname == "" {
-		hostname = data.LongID
-	}
-	// TODO: for backwards compatibility, remove in 1.0
-	clientID := data.ClientID
-	if clientID == "" {
-		clientID = data.ShortID
-	}
-
 	c.metaLock.Lock()
-	c.ClientID = clientID
-	c.Hostname = hostname
+	c.ClientID = data.ClientID
+	c.Hostname = data.Hostname
 	c.UserAgent = data.UserAgent
 	c.metaLock.Unlock()
 
@@ -216,9 +202,6 @@ func (c *clientV2) Identify(data identifyDataV2) error {
 
 func (c *clientV2) Stats() ClientStats {
 	c.metaLock.RLock()
-	// TODO: deprecated, remove in 1.0
-	name := c.ClientID
-
 	clientID := c.ClientID
 	hostname := c.Hostname
 	userAgent := c.UserAgent
@@ -230,9 +213,6 @@ func (c *clientV2) Stats() ClientStats {
 	}
 	c.metaLock.RUnlock()
 	stats := ClientStats{
-		// TODO: deprecated, remove in 1.0
-		Name: name,
-
 		Version:         "V2",
 		RemoteAddress:   c.RemoteAddr().String(),
 		ClientID:        clientID,
@@ -533,8 +513,8 @@ func (c *clientV2) UpgradeSnappy() error {
 		conn = c.tlsConn
 	}
 
-	c.Reader = bufio.NewReaderSize(snappystream.NewReader(conn, snappystream.SkipVerifyChecksum), defaultBufferSize)
-	c.Writer = bufio.NewWriterSize(snappystream.NewWriter(conn), c.OutputBufferSize)
+	c.Reader = bufio.NewReaderSize(snappy.NewReader(conn), defaultBufferSize)
+	c.Writer = bufio.NewWriterSize(snappy.NewWriter(conn), c.OutputBufferSize)
 
 	atomic.StoreInt32(&c.Snappy, 1)
 
@@ -574,7 +554,8 @@ func (c *clientV2) QueryAuthd() error {
 	}
 
 	authState, err := auth.QueryAnyAuthd(c.ctx.nsqd.getOpts().AuthHTTPAddresses,
-		remoteIP, tlsEnabled, c.AuthSecret)
+		remoteIP, tlsEnabled, c.AuthSecret, c.ctx.nsqd.getOpts().HTTPClientConnectTimeout,
+		c.ctx.nsqd.getOpts().HTTPClientRequestTimeout)
 	if err != nil {
 		return err
 	}

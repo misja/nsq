@@ -7,7 +7,8 @@ import (
 )
 
 type Options struct {
-	Verbose bool `flag:"verbose"`
+	Verbose   bool   `flag:"verbose"`
+	LogPrefix string `flag:"log-prefix"`
 
 	TCPAddress       string `flag:"tcp-address"`
 	HTTPAddress      string `flag:"http-address"`
@@ -16,7 +17,7 @@ type Options struct {
 	InactiveProducerTimeout time.Duration `flag:"inactive-producer-timeout"`
 	TombstoneLifetime       time.Duration `flag:"tombstone-lifetime"`
 
-	Logger logger
+	Logger Logger
 }
 
 func NewOptions() *Options {
@@ -26,13 +27,12 @@ func NewOptions() *Options {
 	}
 
 	return &Options{
+		LogPrefix:        "[nsqlookupd] ",
 		TCPAddress:       "0.0.0.0:4160",
 		HTTPAddress:      "0.0.0.0:4161",
 		BroadcastAddress: hostname,
 
 		InactiveProducerTimeout: 300 * time.Second,
 		TombstoneLifetime:       45 * time.Second,
-
-		Logger: log.New(os.Stderr, "[nsqlookupd] ", log.Ldate|log.Ltime|log.Lmicroseconds),
 	}
 }

@@ -10,7 +10,7 @@
 </ul>
 </p>
 
-[![Build Status](https://secure.travis-ci.org/nsqio/nsq.svg?branch=master)](http://travis-ci.org/nsqio/nsq) [![GitHub release](https://img.shields.io/github/release/nsqio/nsq.svg)](https://github.com/nsqio/nsq/releases/latest)
+[![Build Status](https://secure.travis-ci.org/nsqio/nsq.svg?branch=master)](http://travis-ci.org/nsqio/nsq) [![GitHub release](https://img.shields.io/github/release/nsqio/nsq.svg)](https://github.com/nsqio/nsq/releases/latest) [![Coverage Status](https://coveralls.io/repos/github/nsqio/nsq/badge.svg?branch=master)](https://coveralls.io/github/nsqio/nsq?branch=master)
 
 **NSQ** is a realtime distributed messaging platform designed to operate at scale, handling
 billions of messages per day.
@@ -68,6 +68,9 @@ NOTE: master is our *development* branch and may not be stable at all times.
 <a href="https://talky.io"><img src="http://nsq.io/static/img/talky_logo.png" width="97" align="middle"/></a><br/>
 
 <a href="https://groupme.com"><img src="http://nsq.io/static/img/groupme_logo.png" width="97" align="middle"/></a>&nbsp;&nbsp;
+<a href="https://deis.com"><img src="http://nsq.io/static/img/deis_logo.svg" width="75" align="middle"/></a>&nbsp;&nbsp;
+<a href="https://wiredcraft.com"><img src="http://nsq.io/static/img/wiredcraft_logo.jpg" width="97" align="middle"/></a>&nbsp;&nbsp;
+<a href="https://sproutsocial.com"><img src="http://nsq.io/static/img/sproutsocial_logo.png" width="90" align="middle"/></a>&nbsp;&nbsp;
 
 ## Code of Conduct
 

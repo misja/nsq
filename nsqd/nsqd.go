@@ -1,12 +1,14 @@
 package nsqd
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"math/rand"
 	"net"
 	"os"
@@ -17,7 +19,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/bitly/go-simplejson"
 	"github.com/nsqio/nsq/internal/clusterinfo"
 	"github.com/nsqio/nsq/internal/dirlock"
 	"github.com/nsqio/nsq/internal/http_api"
@@ -61,7 +62,6 @@ type NSQD struct {
 
 	poolSize int
 
-	idChan               chan MessageID
 	notifyChan           chan interface{}
 	optsNotificationChan chan struct{}
 	exitChan             chan int
@@ -76,15 +76,17 @@ func New(opts *Options) *NSQD {
 		cwd, _ := os.Getwd()
 		dataPath = cwd
 	}
+	if opts.Logger == nil {
+		opts.Logger = log.New(os.Stderr, opts.LogPrefix, log.Ldate|log.Ltime|log.Lmicroseconds)
+	}
 
 	n := &NSQD{
 		startTime:            time.Now(),
 		topicMap:             make(map[string]*Topic),
-		idChan:               make(chan MessageID, 4096),
 		exitChan:             make(chan int),
 		notifyChan:           make(chan interface{}),
 		optsNotificationChan: make(chan struct{}, 1),
-		ci:                   clusterinfo.New(opts.Logger, http_api.NewClient(nil)),
+		ci:                   clusterinfo.New(opts.Logger, http_api.NewClient(nil, opts.HTTPClientConnectTimeout, opts.HTTPClientRequestTimeout)),
 		dl:                   dirlock.New(dataPath),
 	}
 	n.swapOpts(opts)
@@ -102,7 +104,7 @@ func New(opts *Options) *NSQD {
 	}
 
 	if opts.ID < 0 || opts.ID >= 1024 {
-		n.logf("FATAL: --worker-id must be [0,1024)")
+		n.logf("FATAL: --node-id must be [0,1024)")
 		os.Exit(1)
 	}
 
@@ -143,9 +145,6 @@ func New(opts *Options) *NSQD {
 }
 
 func (n *NSQD) logf(f string, args ...interface{}) {
-	if n.getOpts().Logger == nil {
-		return
-	}
 	n.getOpts().Logger.Output(2, fmt.Sprintf(f, args...))
 }
 
@@ -254,88 +253,122 @@ func (n *NSQD) Main() {
 	})
 
 	n.waitGroup.Wrap(func() { n.queueScanLoop() })
-	n.waitGroup.Wrap(func() { n.idPump() })
 	n.waitGroup.Wrap(func() { n.lookupLoop() })
 	if n.getOpts().StatsdAddress != "" {
 		n.waitGroup.Wrap(func() { n.statsdLoop() })
 	}
 }
 
-func (n *NSQD) LoadMetadata() {
-	atomic.StoreInt32(&n.isLoading, 1)
-	defer atomic.StoreInt32(&n.isLoading, 0)
-	fn := fmt.Sprintf(path.Join(n.getOpts().DataPath, "nsqd.%d.dat"), n.getOpts().ID)
+type meta struct {
+	Topics []struct {
+		Name     string `json:"name"`
+		Paused   bool   `json:"paused"`
+		Channels []struct {
+			Name   string `json:"name"`
+			Paused bool   `json:"paused"`
+		} `json:"channels"`
+	} `json:"topics"`
+}
+
+func newMetadataFile(opts *Options) string {
+	return path.Join(opts.DataPath, "nsqd.dat")
+}
+
+func oldMetadataFile(opts *Options) string {
+	return path.Join(opts.DataPath, fmt.Sprintf("nsqd.%d.dat", opts.ID))
+}
+
+func readOrEmpty(fn string) ([]byte, error) {
 	data, err := ioutil.ReadFile(fn)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			n.logf("ERROR: failed to read channel metadata from %s - %s", fn, err)
+			return nil, fmt.Errorf("failed to read metadata from %s - %s", fn, err)
 		}
-		return
 	}
+	return data, nil
+}
 
-	js, err := simplejson.NewJson(data)
+func writeSyncFile(fn string, data []byte) error {
+	f, err := os.OpenFile(fn, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		n.logf("ERROR: failed to parse metadata - %s", err)
-		return
+		return err
 	}
 
-	topics, err := js.Get("topics").Array()
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	f.Close()
+	return err
+}
+
+func (n *NSQD) LoadMetadata() error {
+	atomic.StoreInt32(&n.isLoading, 1)
+	defer atomic.StoreInt32(&n.isLoading, 0)
+
+	fn := newMetadataFile(n.getOpts())
+	// old metadata filename with ID, maintained in parallel to enable roll-back
+	fnID := oldMetadataFile(n.getOpts())
+
+	data, err := readOrEmpty(fn)
 	if err != nil {
-		n.logf("ERROR: failed to parse metadata - %s", err)
-		return
+		return err
+	}
+	dataID, errID := readOrEmpty(fnID)
+	if errID != nil {
+		return errID
 	}
 
-	for ti := range topics {
-		topicJs := js.Get("topics").GetIndex(ti)
-
-		topicName, err := topicJs.Get("name").String()
-		if err != nil {
-			n.logf("ERROR: failed to parse metadata - %s", err)
-			return
+	if data == nil && dataID == nil {
+		return nil // fresh start
+	}
+	if data != nil && dataID != nil {
+		if bytes.Compare(data, dataID) != 0 {
+			return fmt.Errorf("metadata in %s and %s do not match (delete one)", fn, fnID)
 		}
-		if !protocol.IsValidTopicName(topicName) {
-			n.logf("WARNING: skipping creation of invalid topic %s", topicName)
+	}
+	if data == nil {
+		// only old metadata file exists, use it
+		fn = fnID
+		data = dataID
+	}
+
+	var m meta
+	err = json.Unmarshal(data, &m)
+	if err != nil {
+		return fmt.Errorf("failed to parse metadata in %s - %s", fn, err)
+	}
+
+	for _, t := range m.Topics {
+		if !protocol.IsValidTopicName(t.Name) {
+			n.logf("WARNING: skipping creation of invalid topic %s", t.Name)
 			continue
 		}
-		topic := n.GetTopic(topicName)
-
-		paused, _ := topicJs.Get("paused").Bool()
-		if paused {
+		topic := n.GetTopic(t.Name)
+		if t.Paused {
 			topic.Pause()
 		}
 
-		channels, err := topicJs.Get("channels").Array()
-		if err != nil {
-			n.logf("ERROR: failed to parse metadata - %s", err)
-			return
-		}
-
-		for ci := range channels {
-			channelJs := topicJs.Get("channels").GetIndex(ci)
-
-			channelName, err := channelJs.Get("name").String()
-			if err != nil {
-				n.logf("ERROR: failed to parse metadata - %s", err)
-				return
-			}
-			if !protocol.IsValidChannelName(channelName) {
-				n.logf("WARNING: skipping creation of invalid channel %s", channelName)
+		for _, c := range t.Channels {
+			if !protocol.IsValidChannelName(c.Name) {
+				n.logf("WARNING: skipping creation of invalid channel %s", c.Name)
 				continue
 			}
-			channel := topic.GetChannel(channelName)
-
-			paused, _ = channelJs.Get("paused").Bool()
-			if paused {
+			channel := topic.GetChannel(c.Name)
+			if c.Paused {
 				channel.Pause()
 			}
 		}
 	}
+	return nil
 }
 
 func (n *NSQD) PersistMetadata() error {
-	// persist metadata about what topics/channels we have
-	// so that upon restart we can get back to the same state
-	fileName := fmt.Sprintf(path.Join(n.getOpts().DataPath, "nsqd.%d.dat"), n.getOpts().ID)
+	// persist metadata about what topics/channels we have, across restarts
+	fileName := newMetadataFile(n.getOpts())
+	// old metadata filename with ID, maintained in parallel to enable roll-back
+	fileNameID := oldMetadataFile(n.getOpts())
+
 	n.logf("NSQ: persisting topic/channel metadata to %s", fileName)
 
 	js := make(map[string]interface{})
@@ -374,23 +407,43 @@ func (n *NSQD) PersistMetadata() error {
 	}
 
 	tmpFileName := fmt.Sprintf("%s.%d.tmp", fileName, rand.Int())
-	f, err := os.OpenFile(tmpFileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+
+	err = writeSyncFile(tmpFileName, data)
+	if err != nil {
+		return err
+	}
+	err = os.Rename(tmpFileName, fileName)
+	if err != nil {
+		return err
+	}
+	// technically should fsync DataPath here
+
+	stat, err := os.Lstat(fileNameID)
+	if err == nil && stat.Mode()&os.ModeSymlink != 0 {
+		return nil
+	}
+
+	// if no symlink (yet), race condition:
+	// crash right here may cause next startup to see metadata conflict and abort
+
+	tmpFileNameID := fmt.Sprintf("%s.%d.tmp", fileNameID, rand.Int())
+
+	if runtime.GOOS != "windows" {
+		err = os.Symlink(fileName, tmpFileNameID)
+	} else {
+		// on Windows need Administrator privs to Symlink
+		// instead write copy every time
+		err = writeSyncFile(tmpFileNameID, data)
+	}
 	if err != nil {
 		return err
 	}
 
-	_, err = f.Write(data)
-	if err != nil {
-		f.Close()
-		return err
-	}
-	f.Sync()
-	f.Close()
-
-	err = atomicRename(tmpFileName, fileName)
+	err = os.Rename(tmpFileNameID, fileNameID)
 	if err != nil {
 		return err
 	}
+	// technically should fsync DataPath here
 
 	return nil
 }
@@ -419,8 +472,6 @@ func (n *NSQD) Exit() {
 	}
 	n.Unlock()
 
-	// we want to do this last as it closes the idPump (if closed first it
-	// could potentially starve items in process and deadlock)
 	close(n.exitChan)
 	n.waitGroup.Wait()
 
@@ -462,7 +513,10 @@ func (n *NSQD) GetTopic(topicName string) *Topic {
 	// this makes sure that any message received is buffered to the right channels
 	lookupdHTTPAddrs := n.lookupdHTTPAddrs()
 	if len(lookupdHTTPAddrs) > 0 {
-		channelNames, _ := n.ci.GetLookupdTopicChannels(t.name, lookupdHTTPAddrs)
+		channelNames, err := n.ci.GetLookupdTopicChannels(t.name, lookupdHTTPAddrs)
+		if err != nil {
+			n.logf("WARNING: failed to query nsqlookupd for channels to pre-create for topic %s - %s", t.name, err)
+		}
 		for _, channelName := range channelNames {
 			if strings.HasSuffix(channelName, "#ephemeral") {
 				// we don't want to pre-create ephemeral channels
@@ -471,6 +525,8 @@ func (n *NSQD) GetTopic(topicName string) *Topic {
 			}
 			t.getOrCreateChannel(channelName)
 		}
+	} else if len(n.getOpts().NSQLookupdTCPAddresses) > 0 {
+		n.logf("ERROR: no available nsqlookupd to query for channels to pre-create for topic %s", t.name)
 	}
 
 	t.Unlock()
@@ -522,33 +578,6 @@ func (n *NSQD) DeleteExistingTopic(topicName string) error {
 	n.Unlock()
 
 	return nil
-}
-
-func (n *NSQD) idPump() {
-	factory := &guidFactory{}
-	lastError := time.Unix(0, 0)
-	workerID := n.getOpts().ID
-	for {
-		id, err := factory.NewGUID(workerID)
-		if err != nil {
-			now := time.Now()
-			if now.Sub(lastError) > time.Second {
-				// only print the error once/second
-				n.logf("ERROR: %s", err)
-				lastError = now
-			}
-			runtime.Gosched()
-			continue
-		}
-		select {
-		case n.idChan <- id.Hex():
-		case <-n.exitChan:
-			goto exit
-		}
-	}
-
-exit:
-	n.logf("ID: closing")
 }
 
 func (n *NSQD) Notify(v interface{}) {

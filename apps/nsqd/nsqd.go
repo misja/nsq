@@ -80,7 +80,9 @@ func nsqdFlagSet(opts *nsqd.Options) *flag.FlagSet {
 	flagSet.Bool("version", false, "print version string")
 	flagSet.Bool("verbose", false, "enable verbose logging")
 	flagSet.String("config", "", "path to config file")
-	flagSet.Int64("worker-id", opts.ID, "unique seed for message ID generation (int) in range [0,4096) (will default to a hash of hostname)")
+	flagSet.String("log-prefix", "[nsqd] ", "log message prefix")
+	flagSet.Int64("node-id", opts.ID, "unique part for message IDs, (int) in range [0,1024) (default is hash of hostname)")
+	flagSet.Bool("worker-id", false, "do NOT use this, use --node-id")
 
 	flagSet.String("https-address", opts.HTTPSAddress, "<addr>:<port> to listen on for HTTPS clients")
 	flagSet.String("http-address", opts.HTTPAddress, "<addr>:<port> to listen on for HTTP clients")
@@ -90,6 +92,8 @@ func nsqdFlagSet(opts *nsqd.Options) *flag.FlagSet {
 	flagSet.String("broadcast-address", opts.BroadcastAddress, "address that will be registered with lookupd (defaults to the OS hostname)")
 	lookupdTCPAddrs := app.StringArray{}
 	flagSet.Var(&lookupdTCPAddrs, "lookupd-tcp-address", "lookupd TCP address (may be given multiple times)")
+	flagSet.Duration("http-client-connect-timeout", opts.HTTPClientConnectTimeout, "timeout for HTTP connect")
+	flagSet.Duration("http-client-request-timeout", opts.HTTPClientRequestTimeout, "timeout for HTTP request")
 
 	// diskqueue options
 	flagSet.String("data-path", opts.DataPath, "path to store disk-backed messages")
@@ -103,8 +107,6 @@ func nsqdFlagSet(opts *nsqd.Options) *flag.FlagSet {
 	flagSet.Duration("max-msg-timeout", opts.MaxMsgTimeout, "maximum duration before a message will timeout")
 	flagSet.Int64("max-msg-size", opts.MaxMsgSize, "maximum size of a single message in bytes")
 	flagSet.Duration("max-req-timeout", opts.MaxReqTimeout, "maximum requeuing timeout for a message")
-	// remove, deprecated
-	flagSet.Int64("max-message-size", opts.MaxMsgSize, "(deprecated use --max-msg-size) maximum size of a single message in bytes")
 	flagSet.Int64("max-body-size", opts.MaxBodySize, "maximum size of a single command body")
 
 	// client overridable configuration options
@@ -217,8 +219,11 @@ func (p *program) Start() error {
 	options.Resolve(opts, flagSet, cfg)
 	nsqd := nsqd.New(opts)
 
-	nsqd.LoadMetadata()
-	err := nsqd.PersistMetadata()
+	err := nsqd.LoadMetadata()
+	if err != nil {
+		log.Fatalf("ERROR: %s", err.Error())
+	}
+	err = nsqd.PersistMetadata()
 	if err != nil {
 		log.Fatalf("ERROR: failed to persist metadata - %s", err.Error())
 	}

@@ -6,7 +6,9 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
+	"github.com/nsqio/go-diskqueue"
 	"github.com/nsqio/nsq/internal/quantile"
 	"github.com/nsqio/nsq/internal/util"
 )
@@ -25,6 +27,7 @@ type Topic struct {
 	channelUpdateChan chan int
 	waitGroup         util.WaitGroupWrapper
 	exitFlag          int32
+	idFactory         *guidFactory
 
 	ephemeral      bool
 	deleteCallback func(*Topic)
@@ -47,13 +50,14 @@ func NewTopic(topicName string, ctx *context, deleteCallback func(*Topic)) *Topi
 		ctx:               ctx,
 		pauseChan:         make(chan bool),
 		deleteCallback:    deleteCallback,
+		idFactory:         NewGUIDFactory(ctx.nsqd.getOpts().ID),
 	}
 
 	if strings.HasSuffix(topicName, "#ephemeral") {
 		t.ephemeral = true
 		t.backend = newDummyBackendQueue()
 	} else {
-		t.backend = newDiskQueue(topicName,
+		t.backend = diskqueue.New(topicName,
 			ctx.nsqd.getOpts().DataPath,
 			ctx.nsqd.getOpts().MaxBytesPerFile,
 			int32(minValidMsgLength),
@@ -275,7 +279,7 @@ func (t *Topic) messagePump() {
 				chanMsg.deferred = msg.deferred
 			}
 			if chanMsg.deferred != 0 {
-				channel.StartDeferredTimeout(chanMsg, chanMsg.deferred)
+				channel.PutMessageDeferred(chanMsg, chanMsg.deferred)
 				continue
 			}
 			err := channel.PutMessage(chanMsg)
@@ -434,4 +438,14 @@ func (t *Topic) doPause(pause bool) error {
 
 func (t *Topic) IsPaused() bool {
 	return atomic.LoadInt32(&t.paused) == 1
+}
+
+func (t *Topic) GenerateID() MessageID {
+retry:
+	id, err := t.idFactory.NewGUID()
+	if err != nil {
+		time.Sleep(time.Millisecond)
+		goto retry
+	}
+	return id.Hex()
 }

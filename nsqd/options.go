@@ -12,14 +12,17 @@ import (
 
 type Options struct {
 	// basic options
-	ID                     int64    `flag:"worker-id" cfg:"id"`
-	Verbose                bool     `flag:"verbose"`
-	TCPAddress             string   `flag:"tcp-address"`
-	HTTPAddress            string   `flag:"http-address"`
-	HTTPSAddress           string   `flag:"https-address"`
-	BroadcastAddress       string   `flag:"broadcast-address"`
-	NSQLookupdTCPAddresses []string `flag:"lookupd-tcp-address" cfg:"nsqlookupd_tcp_addresses"`
-	AuthHTTPAddresses      []string `flag:"auth-http-address" cfg:"auth_http_addresses"`
+	ID                       int64         `flag:"node-id" cfg:"id"`
+	Verbose                  bool          `flag:"verbose"`
+	LogPrefix                string        `flag:"log-prefix"`
+	TCPAddress               string        `flag:"tcp-address"`
+	HTTPAddress              string        `flag:"http-address"`
+	HTTPSAddress             string        `flag:"https-address"`
+	BroadcastAddress         string        `flag:"broadcast-address"`
+	NSQLookupdTCPAddresses   []string      `flag:"lookupd-tcp-address" cfg:"nsqlookupd_tcp_addresses"`
+	AuthHTTPAddresses        []string      `flag:"auth-http-address" cfg:"auth_http_addresses"`
+	HTTPClientConnectTimeout time.Duration `flag:"http-client-connect-timeout" cfg:"http_client_connect_timeout"`
+	HTTPClientRequestTimeout time.Duration `flag:"http-client-request-timeout" cfg:"http_client_request_timeout"`
 
 	// diskqueue options
 	DataPath        string        `flag:"data-path"`
@@ -37,7 +40,7 @@ type Options struct {
 	// msg and command options
 	MsgTimeout    time.Duration `flag:"msg-timeout" arg:"1ms"`
 	MaxMsgTimeout time.Duration `flag:"max-msg-timeout"`
-	MaxMsgSize    int64         `flag:"max-msg-size" deprecated:"max-message-size" cfg:"max_msg_size"`
+	MaxMsgSize    int64         `flag:"max-msg-size"`
 	MaxBodySize   int64         `flag:"max-body-size"`
 	MaxReqTimeout time.Duration `flag:"max-req-timeout"`
 	ClientTimeout time.Duration
@@ -71,7 +74,7 @@ type Options struct {
 	MaxDeflateLevel int  `flag:"max-deflate-level"`
 	SnappyEnabled   bool `flag:"snappy"`
 
-	Logger logger
+	Logger Logger
 }
 
 func NewOptions() *Options {
@@ -85,7 +88,8 @@ func NewOptions() *Options {
 	defaultID := int64(crc32.ChecksumIEEE(h.Sum(nil)) % 1024)
 
 	return &Options{
-		ID: defaultID,
+		ID:        defaultID,
+		LogPrefix: "[nsqd] ",
 
 		TCPAddress:       "0.0.0.0:4150",
 		HTTPAddress:      "0.0.0.0:4151",
@@ -94,6 +98,9 @@ func NewOptions() *Options {
 
 		NSQLookupdTCPAddresses: make([]string, 0),
 		AuthHTTPAddresses:      make([]string, 0),
+
+		HTTPClientConnectTimeout: 2 * time.Second,
+		HTTPClientRequestTimeout: 5 * time.Second,
 
 		MemQueueSize:    10000,
 		MaxBytesPerFile: 100 * 1024 * 1024,
@@ -129,7 +136,5 @@ func NewOptions() *Options {
 		SnappyEnabled:   true,
 
 		TLSMinVersion: tls.VersionTLS10,
-
-		Logger: log.New(os.Stderr, "[nsqd] ", log.Ldate|log.Ltime|log.Lmicroseconds),
 	}
 }

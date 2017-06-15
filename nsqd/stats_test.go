@@ -8,23 +8,25 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mreiferson/go-snappystream"
+	"github.com/golang/snappy"
+	"github.com/nsqio/nsq/internal/http_api"
+	"github.com/nsqio/nsq/internal/test"
 )
 
 func TestStats(t *testing.T) {
 	opts := NewOptions()
-	opts.Logger = newTestLogger(t)
+	opts.Logger = test.NewTestLogger(t)
 	tcpAddr, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
 
 	topicName := "test_stats" + strconv.Itoa(int(time.Now().Unix()))
 	topic := nsqd.GetTopic(topicName)
-	msg := NewMessage(<-nsqd.idChan, []byte("test body"))
+	msg := NewMessage(topic.GenerateID(), []byte("test body"))
 	topic.PutMessage(msg)
 
 	conn, err := mustConnectNSQD(tcpAddr)
-	equal(t, err, nil)
+	test.Nil(t, err)
 	defer conn.Close()
 
 	identify(t, conn, nil, frameTypeResponse)
@@ -33,16 +35,16 @@ func TestStats(t *testing.T) {
 	stats := nsqd.GetStats()
 	t.Logf("stats: %+v", stats)
 
-	equal(t, len(stats), 1)
-	equal(t, len(stats[0].Channels), 1)
-	equal(t, len(stats[0].Channels[0].Clients), 1)
+	test.Equal(t, 1, len(stats))
+	test.Equal(t, 1, len(stats[0].Channels))
+	test.Equal(t, 1, len(stats[0].Channels[0].Clients))
 }
 
 func TestClientAttributes(t *testing.T) {
 	userAgent := "Test User Agent"
 
 	opts := NewOptions()
-	opts.Logger = newTestLogger(t)
+	opts.Logger = test.NewTestLogger(t)
 	opts.Verbose = true
 	opts.SnappyEnabled = true
 	tcpAddr, httpAddr, nsqd := mustStartNSQD(opts)
@@ -50,7 +52,7 @@ func TestClientAttributes(t *testing.T) {
 	defer nsqd.Exit()
 
 	conn, err := mustConnectNSQD(tcpAddr)
-	equal(t, err, nil)
+	test.Nil(t, err)
 	defer conn.Close()
 
 	data := identify(t, conn, map[string]interface{}{
@@ -62,22 +64,31 @@ func TestClientAttributes(t *testing.T) {
 		UserAgent string `json:"user_agent"`
 	}{}
 	err = json.Unmarshal(data, &resp)
-	equal(t, err, nil)
-	equal(t, resp.Snappy, true)
+	test.Nil(t, err)
+	test.Equal(t, true, resp.Snappy)
 
-	r := snappystream.NewReader(conn, snappystream.SkipVerifyChecksum)
-	w := snappystream.NewWriter(conn)
+	r := snappy.NewReader(conn)
+	w := snappy.NewWriter(conn)
 	readValidate(t, r, frameTypeResponse, "OK")
 
 	topicName := "test_client_attributes" + strconv.Itoa(int(time.Now().Unix()))
 	sub(t, readWriter{r, w}, topicName, "ch")
 
-	testURL := fmt.Sprintf("http://127.0.0.1:%d/stats?format=json", httpAddr.Port)
+	var d struct {
+		Topics []struct {
+			Channels []struct {
+				Clients []struct {
+					UserAgent string `json:"user_agent"`
+					Snappy    bool   `json:"snappy"`
+				} `json:"clients"`
+			} `json:"channels"`
+		} `json:"topics"`
+	}
 
-	statsData, err := API(testURL)
-	equal(t, err, nil)
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d/stats?format=json", httpAddr.Port)
+	err = http_api.NewClient(nil, ConnectTimeout, RequestTimeout).GETV1(endpoint, &d)
+	test.Nil(t, err)
 
-	client := statsData.Get("topics").GetIndex(0).Get("channels").GetIndex(0).Get("clients").GetIndex(0)
-	equal(t, client.Get("user_agent").MustString(), userAgent)
-	equal(t, client.Get("snappy").MustBool(), true)
+	test.Equal(t, userAgent, d.Topics[0].Channels[0].Clients[0].UserAgent)
+	test.Equal(t, true, d.Topics[0].Channels[0].Clients[0].Snappy)
 }
