@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/nsqio/nsq/internal/http_api"
+	"github.com/nsqio/nsq/internal/lg"
 	"github.com/nsqio/nsq/internal/protocol"
 	"github.com/nsqio/nsq/internal/util"
 	"github.com/nsqio/nsq/internal/version"
@@ -30,53 +31,52 @@ func New(opts *Options) *NSQLookupd {
 		opts: opts,
 		DB:   NewRegistrationDB(),
 	}
-	n.logf(version.String("nsqlookupd"))
+
+	var err error
+	opts.logLevel, err = lg.ParseLogLevel(opts.LogLevel, opts.Verbose)
+	if err != nil {
+		n.logf(LOG_FATAL, "%s", err)
+		os.Exit(1)
+	}
+
+	n.logf(LOG_INFO, version.String("nsqlookupd"))
 	return n
 }
 
-func (l *NSQLookupd) logf(f string, args ...interface{}) {
-	l.opts.Logger.Output(2, fmt.Sprintf(f, args...))
-}
-
-func (l *NSQLookupd) Main() {
+// Main starts an instance of nsqlookupd and returns an
+// error if there was a problem starting up.
+func (l *NSQLookupd) Main() error {
 	ctx := &Context{l}
 
 	tcpListener, err := net.Listen("tcp", l.opts.TCPAddress)
 	if err != nil {
-		l.logf("FATAL: listen (%s) failed - %s", l.opts.TCPAddress, err)
-		os.Exit(1)
+		return fmt.Errorf("listen (%s) failed - %s", l.opts.TCPAddress, err)
 	}
-	l.Lock()
-	l.tcpListener = tcpListener
-	l.Unlock()
-	tcpServer := &tcpServer{ctx: ctx}
-	l.waitGroup.Wrap(func() {
-		protocol.TCPServer(tcpListener, tcpServer, l.opts.Logger)
-	})
-
 	httpListener, err := net.Listen("tcp", l.opts.HTTPAddress)
 	if err != nil {
-		l.logf("FATAL: listen (%s) failed - %s", l.opts.HTTPAddress, err)
-		os.Exit(1)
+		return fmt.Errorf("listen (%s) failed - %s", l.opts.TCPAddress, err)
 	}
-	l.Lock()
+
+	l.tcpListener = tcpListener
 	l.httpListener = httpListener
-	l.Unlock()
+
+	tcpServer := &tcpServer{ctx: ctx}
+	l.waitGroup.Wrap(func() {
+		protocol.TCPServer(tcpListener, tcpServer, l.logf)
+	})
 	httpServer := newHTTPServer(ctx)
 	l.waitGroup.Wrap(func() {
-		http_api.Serve(httpListener, httpServer, "HTTP", l.opts.Logger)
+		http_api.Serve(httpListener, httpServer, "HTTP", l.logf)
 	})
+
+	return nil
 }
 
 func (l *NSQLookupd) RealTCPAddr() *net.TCPAddr {
-	l.RLock()
-	defer l.RUnlock()
 	return l.tcpListener.Addr().(*net.TCPAddr)
 }
 
 func (l *NSQLookupd) RealHTTPAddr() *net.TCPAddr {
-	l.RLock()
-	defer l.RUnlock()
 	return l.httpListener.Addr().(*net.TCPAddr)
 }
 

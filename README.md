@@ -26,7 +26,7 @@ Python libraries are available out of the box (as well as many other [client
 libraries][client_libraries]) and, if you're interested in building your own, there's a [protocol
 spec][protocol].
 
-We publish [binary releases][installing] for linux and darwin.
+We publish [binary releases][installing] for linux, darwin, freebsd and windows as well as an official [Docker image][docker_deployment].
 
 NOTE: master is our *development* branch and may not be stable at all times.
 
@@ -39,7 +39,7 @@ NOTE: master is our *development* branch and may not be stable at all times.
 <a href="https://moz.com/"><img src="http://nsq.io/static/img/moz_logo.png" width="108" align="middle"/></a>&nbsp;&nbsp;
 <a href="https://path.com/"><img src="http://nsq.io/static/img/path_logo.png" width="84" align="middle"/></a><br/>
 
-<a href="https://segment.com/"><img src="http://nsq.io/static/img/segmentio_logo.png" width="70" align="middle"/></a>&nbsp;&nbsp;
+<a href="https://segment.com/"><img src="http://nsq.io/static/img/segment_logo.png" width="70" align="middle"/></a>&nbsp;&nbsp;
 <a href="http://eventful.com/events"><img src="http://nsq.io/static/img/eventful_logo.png" width="95" align="middle"/></a>&nbsp;&nbsp;
 <a href="http://www.energyhub.com"><img src="http://nsq.io/static/img/energyhub_logo.png" width="99" align="middle"/></a>&nbsp;&nbsp;
 <a href="https://project-fifo.net"><img src="http://nsq.io/static/img/project_fifo.png" width="97" align="middle"/></a>&nbsp;&nbsp;
@@ -71,6 +71,7 @@ NOTE: master is our *development* branch and may not be stable at all times.
 <a href="https://deis.com"><img src="http://nsq.io/static/img/deis_logo.svg" width="75" align="middle"/></a>&nbsp;&nbsp;
 <a href="https://wiredcraft.com"><img src="http://nsq.io/static/img/wiredcraft_logo.jpg" width="97" align="middle"/></a>&nbsp;&nbsp;
 <a href="https://sproutsocial.com"><img src="http://nsq.io/static/img/sproutsocial_logo.png" width="90" align="middle"/></a>&nbsp;&nbsp;
+<a href="http://fandom.wikia.com"><img src="http://nsq.io/static/img/fandom_logo.svg" width="100" align="middle"/></a>&nbsp;&nbsp;
 
 ## Code of Conduct
 
@@ -86,6 +87,7 @@ Logo created by Wolasi Konu ([@kisalow][wolasi_twitter]).
 
 [protocol]: http://nsq.io/clients/tcp_protocol_spec.html
 [installing]: http://nsq.io/deployment/installing.html
+[docker_deployment]: http://nsq.io/deployment/docker.html
 [snakes_twitter]: https://twitter.com/imsnakes
 [jehiah_twitter]: https://twitter.com/jehiah
 [bitly]: https://bitly.com

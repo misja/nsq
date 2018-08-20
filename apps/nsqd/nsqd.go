@@ -78,9 +78,12 @@ func nsqdFlagSet(opts *nsqd.Options) *flag.FlagSet {
 
 	// basic options
 	flagSet.Bool("version", false, "print version string")
-	flagSet.Bool("verbose", false, "enable verbose logging")
 	flagSet.String("config", "", "path to config file")
+
+	flagSet.String("log-level", "info", "set log verbosity: debug, info, warn, error, or fatal")
 	flagSet.String("log-prefix", "[nsqd] ", "log message prefix")
+	flagSet.Bool("verbose", false, "deprecated in favor of log-level")
+
 	flagSet.Int64("node-id", opts.ID, "unique part for message IDs, (int) in range [0,1024) (default is hash of hostname)")
 	flagSet.Bool("worker-id", false, "do NOT use this, use --node-id")
 
@@ -103,7 +106,7 @@ func nsqdFlagSet(opts *nsqd.Options) *flag.FlagSet {
 	flagSet.Duration("sync-timeout", opts.SyncTimeout, "duration of time per diskqueue fsync")
 
 	// msg and command options
-	flagSet.String("msg-timeout", opts.MsgTimeout.String(), "duration to wait before auto-requeing a message")
+	flagSet.Duration("msg-timeout", opts.MsgTimeout, "default duration to wait before auto-requeing a message")
 	flagSet.Duration("max-msg-timeout", opts.MaxMsgTimeout, "maximum duration before a message will timeout")
 	flagSet.Int64("max-msg-size", opts.MaxMsgSize, "maximum size of a single message in bytes")
 	flagSet.Duration("max-req-timeout", opts.MaxReqTimeout, "maximum requeuing timeout for a message")
@@ -117,9 +120,10 @@ func nsqdFlagSet(opts *nsqd.Options) *flag.FlagSet {
 
 	// statsd integration options
 	flagSet.String("statsd-address", opts.StatsdAddress, "UDP <addr>:<port> of a statsd daemon for pushing stats")
-	flagSet.String("statsd-interval", opts.StatsdInterval.String(), "duration between pushing to statsd")
+	flagSet.Duration("statsd-interval", opts.StatsdInterval, "duration between pushing to statsd")
 	flagSet.Bool("statsd-mem-stats", opts.StatsdMemStats, "toggle sending memory and GC stats to statsd")
 	flagSet.String("statsd-prefix", opts.StatsdPrefix, "prefix used for keys sent to statsd (%s for host replacement)")
+	flagSet.Int("statsd-udp-packet-size", opts.StatsdUDPPacketSize, "the size in bytes of statsd UDP packets")
 
 	// End to end percentile flags
 	e2eProcessingLatencyPercentiles := app.FloatArray{}

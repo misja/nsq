@@ -208,7 +208,7 @@ func TestClientTimeout(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
 	opts.ClientTimeout = 150 * time.Millisecond
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	tcpAddr, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -281,7 +281,7 @@ func TestClientHeartbeatDisableSUB(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
 	opts.ClientTimeout = 200 * time.Millisecond
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	tcpAddr, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -441,7 +441,7 @@ func TestEmptyCommand(t *testing.T) {
 func TestSizeLimits(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	opts.MaxMsgSize = 100
 	opts.MaxBodySize = 1000
 	tcpAddr, _, nsqd := mustStartNSQD(opts)
@@ -558,7 +558,7 @@ func TestSizeLimits(t *testing.T) {
 func TestDPUB(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	tcpAddr, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -601,7 +601,7 @@ func TestDPUB(t *testing.T) {
 func TestTouch(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	opts.MsgTimeout = 150 * time.Millisecond
 	tcpAddr, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
@@ -647,7 +647,7 @@ func TestTouch(t *testing.T) {
 func TestMaxRdyCount(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	opts.MaxRdyCount = 50
 	tcpAddr, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
@@ -719,7 +719,7 @@ func TestFatalError(t *testing.T) {
 func TestOutputBuffering(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	opts.MaxOutputBufferSize = 512 * 1024
 	opts.MaxOutputBufferTimeout = time.Second
 	tcpAddr, _, nsqd := mustStartNSQD(opts)
@@ -771,7 +771,7 @@ func TestOutputBuffering(t *testing.T) {
 func TestOutputBufferingValidity(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	opts.MaxOutputBufferSize = 512 * 1024
 	opts.MaxOutputBufferTimeout = time.Second
 	tcpAddr, _, nsqd := mustStartNSQD(opts)
@@ -814,7 +814,7 @@ func TestOutputBufferingValidity(t *testing.T) {
 func TestTLS(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	opts.TLSCert = "./test/certs/server.pem"
 	opts.TLSKey = "./test/certs/server.key"
 	tcpAddr, _, nsqd := mustStartNSQD(opts)
@@ -853,7 +853,7 @@ func TestTLS(t *testing.T) {
 func TestTLSRequired(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	opts.TLSCert = "./test/certs/server.pem"
 	opts.TLSKey = "./test/certs/server.key"
 	opts.TLSRequired = TLSRequiredExceptHTTP
@@ -902,7 +902,7 @@ func TestTLSRequired(t *testing.T) {
 func TestTLSAuthRequire(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	opts.TLSCert = "./test/certs/server.pem"
 	opts.TLSKey = "./test/certs/server.key"
 	opts.TLSClientAuthPolicy = "require"
@@ -968,7 +968,7 @@ func TestTLSAuthRequire(t *testing.T) {
 func TestTLSAuthRequireVerify(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	opts.TLSCert = "./test/certs/server.pem"
 	opts.TLSKey = "./test/certs/server.key"
 	opts.TLSRootCAFile = "./test/certs/ca.pem"
@@ -1057,7 +1057,7 @@ func TestTLSAuthRequireVerify(t *testing.T) {
 func TestDeflate(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	opts.DeflateEnabled = true
 	tcpAddr, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
@@ -1093,7 +1093,7 @@ type readWriter struct {
 func TestSnappy(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	opts.SnappyEnabled = true
 	tcpAddr, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
@@ -1146,7 +1146,7 @@ func TestSnappy(t *testing.T) {
 func TestTLSDeflate(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	opts.DeflateEnabled = true
 	opts.TLSCert = "./test/certs/cert.pem"
 	opts.TLSKey = "./test/certs/key.pem"
@@ -1203,7 +1203,7 @@ func TestSampling(t *testing.T) {
 
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	opts.MaxRdyCount = int64(num)
 	tcpAddr, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
@@ -1270,7 +1270,7 @@ func TestSampling(t *testing.T) {
 func TestTLSSnappy(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	opts.SnappyEnabled = true
 	opts.TLSCert = "./test/certs/cert.pem"
 	opts.TLSKey = "./test/certs/key.pem"
@@ -1321,7 +1321,7 @@ func TestTLSSnappy(t *testing.T) {
 func TestClientMsgTimeout(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	opts.QueueScanRefreshInterval = 100 * time.Millisecond
 	tcpAddr, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
@@ -1362,7 +1362,7 @@ func TestClientMsgTimeout(t *testing.T) {
 	_, err = nsq.Ready(0).WriteTo(conn)
 	test.Nil(t, err)
 
-	time.Sleep(1100 * time.Millisecond)
+	time.Sleep(1150 * time.Millisecond)
 
 	test.Equal(t, 1, int(atomic.LoadUint64(&ch.timeoutCount)))
 	test.Equal(t, 0, int(atomic.LoadUint64(&ch.requeueCount)))
@@ -1380,7 +1380,7 @@ func TestClientMsgTimeout(t *testing.T) {
 func TestBadFin(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	tcpAddr, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -1401,6 +1401,66 @@ func TestBadFin(t *testing.T) {
 	frameType, data, _ := nsq.UnpackResponse(resp)
 	test.Equal(t, frameTypeError, frameType)
 	test.Equal(t, "E_INVALID Invalid Message ID", string(data))
+}
+
+func TestReqTimeoutRange(t *testing.T) {
+	opts := NewOptions()
+	opts.Logger = test.NewTestLogger(t)
+	opts.LogLevel = "debug"
+	opts.MaxReqTimeout = 1 * time.Minute
+	tcpAddr, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topicName := "test_req" + strconv.Itoa(int(time.Now().Unix()))
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Nil(t, err)
+	defer conn.Close()
+
+	identify(t, conn, nil, frameTypeResponse)
+	sub(t, conn, topicName, "ch")
+
+	topic := nsqd.GetTopic(topicName)
+	channel := topic.GetChannel("ch")
+	msg := NewMessage(topic.GenerateID(), []byte("test body"))
+	topic.PutMessage(msg)
+
+	_, err = nsq.Ready(1).WriteTo(conn)
+	test.Nil(t, err)
+
+	resp, err := nsq.ReadResponse(conn)
+	test.Nil(t, err)
+	frameType, data, err := nsq.UnpackResponse(resp)
+	msgOut, _ := decodeMessage(data)
+	test.Equal(t, frameTypeMessage, frameType)
+	test.Equal(t, msg.ID, msgOut.ID)
+
+	_, err = nsq.Requeue(nsq.MessageID(msg.ID), -1).WriteTo(conn)
+	test.Nil(t, err)
+
+	// It should be immediately available for another attempt
+	resp, err = nsq.ReadResponse(conn)
+	test.Nil(t, err)
+	frameType, data, err = nsq.UnpackResponse(resp)
+	msgOut, _ = decodeMessage(data)
+	test.Equal(t, frameTypeMessage, frameType)
+	test.Equal(t, msg.ID, msgOut.ID)
+
+	// The priority (processing time) should be >= this
+	minTs := time.Now().Add(opts.MaxReqTimeout).UnixNano()
+
+	_, err = nsq.Requeue(nsq.MessageID(msg.ID), opts.MaxReqTimeout*2).WriteTo(conn)
+	test.Nil(t, err)
+
+	time.Sleep(100 * time.Millisecond)
+
+	channel.deferredMutex.Lock()
+	pqItem := channel.deferredMessages[msg.ID]
+	channel.deferredMutex.Unlock()
+
+	test.NotNil(t, pqItem)
+	test.Equal(t, true, pqItem.Priority >= minTs)
 }
 
 func TestClientAuth(t *testing.T) {
@@ -1440,7 +1500,7 @@ func runAuthTest(t *testing.T, authResponse, authSecret, authError, authSuccess 
 
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	opts.AuthHTTPAddresses = []string{addr.Host}
 	tcpAddr, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
@@ -1490,7 +1550,7 @@ func testIOLoopReturnsClientErr(t *testing.T, fakeConn test.FakeNetConn) {
 
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 
 	prot := &protocolV2{ctx: &context{nsqd: New(opts)}}
 	defer prot.ctx.nsqd.Exit()

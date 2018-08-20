@@ -8,13 +8,19 @@ import (
 	"log"
 	"os"
 	"time"
+
+	"github.com/nsqio/nsq/internal/lg"
 )
 
 type Options struct {
 	// basic options
-	ID                       int64         `flag:"node-id" cfg:"id"`
-	Verbose                  bool          `flag:"verbose"`
-	LogPrefix                string        `flag:"log-prefix"`
+	ID        int64  `flag:"node-id" cfg:"id"`
+	LogLevel  string `flag:"log-level"`
+	LogPrefix string `flag:"log-prefix"`
+	Verbose   bool   `flag:"verbose"` // for backwards compatibility
+	Logger    Logger
+	logLevel  lg.LogLevel // private, not really an option
+
 	TCPAddress               string        `flag:"tcp-address"`
 	HTTPAddress              string        `flag:"http-address"`
 	HTTPSAddress             string        `flag:"https-address"`
@@ -38,7 +44,7 @@ type Options struct {
 	QueueScanDirtyPercent    float64
 
 	// msg and command options
-	MsgTimeout    time.Duration `flag:"msg-timeout" arg:"1ms"`
+	MsgTimeout    time.Duration `flag:"msg-timeout"`
 	MaxMsgTimeout time.Duration `flag:"max-msg-timeout"`
 	MaxMsgSize    int64         `flag:"max-msg-size"`
 	MaxBodySize   int64         `flag:"max-body-size"`
@@ -52,10 +58,11 @@ type Options struct {
 	MaxOutputBufferTimeout time.Duration `flag:"max-output-buffer-timeout"`
 
 	// statsd integration
-	StatsdAddress  string        `flag:"statsd-address"`
-	StatsdPrefix   string        `flag:"statsd-prefix"`
-	StatsdInterval time.Duration `flag:"statsd-interval" arg:"1s"`
-	StatsdMemStats bool          `flag:"statsd-mem-stats"`
+	StatsdAddress       string        `flag:"statsd-address"`
+	StatsdPrefix        string        `flag:"statsd-prefix"`
+	StatsdInterval      time.Duration `flag:"statsd-interval"`
+	StatsdMemStats      bool          `flag:"statsd-mem-stats"`
+	StatsdUDPPacketSize int           `flag:"statsd-udp-packet-size"`
 
 	// e2e message latency
 	E2EProcessingLatencyWindowTime  time.Duration `flag:"e2e-processing-latency-window-time"`
@@ -73,8 +80,6 @@ type Options struct {
 	DeflateEnabled  bool `flag:"deflate"`
 	MaxDeflateLevel int  `flag:"max-deflate-level"`
 	SnappyEnabled   bool `flag:"snappy"`
-
-	Logger Logger
 }
 
 func NewOptions() *Options {
@@ -90,6 +95,7 @@ func NewOptions() *Options {
 	return &Options{
 		ID:        defaultID,
 		LogPrefix: "[nsqd] ",
+		LogLevel:  "info",
 
 		TCPAddress:       "0.0.0.0:4150",
 		HTTPAddress:      "0.0.0.0:4151",
@@ -125,9 +131,10 @@ func NewOptions() *Options {
 		MaxOutputBufferSize:    64 * 1024,
 		MaxOutputBufferTimeout: 1 * time.Second,
 
-		StatsdPrefix:   "nsq.%s",
-		StatsdInterval: 60 * time.Second,
-		StatsdMemStats: true,
+		StatsdPrefix:        "nsq.%s",
+		StatsdInterval:      60 * time.Second,
+		StatsdMemStats:      true,
+		StatsdUDPPacketSize: 508,
 
 		E2EProcessingLatencyWindowTime: time.Duration(10 * time.Minute),
 

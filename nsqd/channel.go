@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nsqio/go-diskqueue"
+	"github.com/nsqio/nsq/internal/lg"
 	"github.com/nsqio/nsq/internal/pqueue"
 	"github.com/nsqio/nsq/internal/quantile"
 )
@@ -94,16 +95,22 @@ func NewChannel(topicName string, channelName string, ctx *context,
 		c.ephemeral = true
 		c.backend = newDummyBackendQueue()
 	} else {
+		dqLogf := func(level diskqueue.LogLevel, f string, args ...interface{}) {
+			opts := ctx.nsqd.getOpts()
+			lg.Logf(opts.Logger, opts.logLevel, lg.LogLevel(level), f, args...)
+		}
 		// backend names, for uniqueness, automatically include the topic...
 		backendName := getBackendName(topicName, channelName)
-		c.backend = diskqueue.New(backendName,
+		c.backend = diskqueue.New(
+			backendName,
 			ctx.nsqd.getOpts().DataPath,
 			ctx.nsqd.getOpts().MaxBytesPerFile,
 			int32(minValidMsgLength),
 			int32(ctx.nsqd.getOpts().MaxMsgSize)+minValidMsgLength,
 			ctx.nsqd.getOpts().SyncEvery,
 			ctx.nsqd.getOpts().SyncTimeout,
-			ctx.nsqd.getOpts().Logger)
+			dqLogf,
+		)
 	}
 
 	c.ctx.nsqd.Notify(c)
@@ -114,14 +121,13 @@ func NewChannel(topicName string, channelName string, ctx *context,
 func (c *Channel) initPQ() {
 	pqSize := int(math.Max(1, float64(c.ctx.nsqd.getOpts().MemQueueSize)/10))
 
-	c.inFlightMessages = make(map[MessageID]*Message)
-	c.deferredMessages = make(map[MessageID]*pqueue.Item)
-
 	c.inFlightMutex.Lock()
+	c.inFlightMessages = make(map[MessageID]*Message)
 	c.inFlightPQ = newInFlightPqueue(pqSize)
 	c.inFlightMutex.Unlock()
 
 	c.deferredMutex.Lock()
+	c.deferredMessages = make(map[MessageID]*pqueue.Item)
 	c.deferredPQ = pqueue.New(pqSize)
 	c.deferredMutex.Unlock()
 }
@@ -150,13 +156,13 @@ func (c *Channel) exit(deleted bool) error {
 	}
 
 	if deleted {
-		c.ctx.nsqd.logf("CHANNEL(%s): deleting", c.name)
+		c.ctx.nsqd.logf(LOG_INFO, "CHANNEL(%s): deleting", c.name)
 
 		// since we are explicitly deleting a channel (not just at system exit time)
 		// de-register this from the lookupd
 		c.ctx.nsqd.Notify(c)
 	} else {
-		c.ctx.nsqd.logf("CHANNEL(%s): closing", c.name)
+		c.ctx.nsqd.logf(LOG_INFO, "CHANNEL(%s): closing", c.name)
 	}
 
 	// this forceably closes client connections
@@ -204,7 +210,7 @@ func (c *Channel) flush() error {
 	var msgBuf bytes.Buffer
 
 	if len(c.memoryMsgChan) > 0 || len(c.inFlightMessages) > 0 || len(c.deferredMessages) > 0 {
-		c.ctx.nsqd.logf("CHANNEL(%s): flushing %d memory %d in-flight %d deferred messages to backend",
+		c.ctx.nsqd.logf(LOG_INFO, "CHANNEL(%s): flushing %d memory %d in-flight %d deferred messages to backend",
 			c.name, len(c.memoryMsgChan), len(c.inFlightMessages), len(c.deferredMessages))
 	}
 
@@ -213,7 +219,7 @@ func (c *Channel) flush() error {
 		case msg := <-c.memoryMsgChan:
 			err := writeMessageToBackend(&msgBuf, msg, c.backend)
 			if err != nil {
-				c.ctx.nsqd.logf("ERROR: failed to write message to backend - %s", err)
+				c.ctx.nsqd.logf(LOG_ERROR, "failed to write message to backend - %s", err)
 			}
 		default:
 			goto finish
@@ -221,20 +227,24 @@ func (c *Channel) flush() error {
 	}
 
 finish:
+	c.inFlightMutex.Lock()
 	for _, msg := range c.inFlightMessages {
 		err := writeMessageToBackend(&msgBuf, msg, c.backend)
 		if err != nil {
-			c.ctx.nsqd.logf("ERROR: failed to write message to backend - %s", err)
+			c.ctx.nsqd.logf(LOG_ERROR, "failed to write message to backend - %s", err)
 		}
 	}
+	c.inFlightMutex.Unlock()
 
+	c.deferredMutex.Lock()
 	for _, item := range c.deferredMessages {
 		msg := item.Value.(*Message)
 		err := writeMessageToBackend(&msgBuf, msg, c.backend)
 		if err != nil {
-			c.ctx.nsqd.logf("ERROR: failed to write message to backend - %s", err)
+			c.ctx.nsqd.logf(LOG_ERROR, "failed to write message to backend - %s", err)
 		}
 	}
+	c.deferredMutex.Unlock()
 
 	return nil
 }
@@ -298,7 +308,7 @@ func (c *Channel) put(m *Message) error {
 		bufferPoolPut(b)
 		c.ctx.nsqd.SetHealth(err)
 		if err != nil {
-			c.ctx.nsqd.logf("CHANNEL(%s) ERROR: failed to write message to backend - %s",
+			c.ctx.nsqd.logf(LOG_ERROR, "CHANNEL(%s): failed to write message to backend - %s",
 				c.name, err)
 			return err
 		}

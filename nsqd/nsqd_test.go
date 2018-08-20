@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"net"
 	"os"
+	"os/exec"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -350,11 +351,15 @@ func mustStartNSQLookupd(opts *nsqlookupd.Options) (*net.TCPAddr, *net.TCPAddr, 
 func TestReconfigure(t *testing.T) {
 	lopts := nsqlookupd.NewOptions()
 	lopts.Logger = test.NewTestLogger(t)
-	_, _, lookupd1 := mustStartNSQLookupd(lopts)
+
+	lopts1 := *lopts
+	_, _, lookupd1 := mustStartNSQLookupd(&lopts1)
 	defer lookupd1.Exit()
-	_, _, lookupd2 := mustStartNSQLookupd(lopts)
+	lopts2 := *lopts
+	_, _, lookupd2 := mustStartNSQLookupd(&lopts2)
 	defer lookupd2.Exit()
-	_, _, lookupd3 := mustStartNSQLookupd(lopts)
+	lopts3 := *lopts
+	_, _, lookupd3 := mustStartNSQLookupd(&lopts3)
 	defer lookupd3.Exit()
 
 	opts := NewOptions()
@@ -363,32 +368,43 @@ func TestReconfigure(t *testing.T) {
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
 
-	time.Sleep(200 * time.Millisecond)
-
-	newOpts := *opts
+	newOpts := NewOptions()
+	newOpts.Logger = opts.Logger
 	newOpts.NSQLookupdTCPAddresses = []string{lookupd1.RealTCPAddr().String()}
-	nsqd.swapOpts(&newOpts)
+	nsqd.swapOpts(newOpts)
 	nsqd.triggerOptsNotification()
 	test.Equal(t, 1, len(nsqd.getOpts().NSQLookupdTCPAddresses))
 
-	time.Sleep(200 * time.Millisecond)
-
-	numLookupPeers := len(nsqd.lookupPeers.Load().([]*lookupPeer))
+	var numLookupPeers int
+	for i := 0; i < 100; i++ {
+		numLookupPeers = len(nsqd.lookupPeers.Load().([]*lookupPeer))
+		if numLookupPeers == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	test.Equal(t, 1, numLookupPeers)
 
-	newOpts = *opts
+	newOpts = NewOptions()
+	newOpts.Logger = opts.Logger
 	newOpts.NSQLookupdTCPAddresses = []string{lookupd2.RealTCPAddr().String(), lookupd3.RealTCPAddr().String()}
-	nsqd.swapOpts(&newOpts)
+	nsqd.swapOpts(newOpts)
 	nsqd.triggerOptsNotification()
 	test.Equal(t, 2, len(nsqd.getOpts().NSQLookupdTCPAddresses))
 
-	time.Sleep(200 * time.Millisecond)
+	for i := 0; i < 100; i++ {
+		numLookupPeers = len(nsqd.lookupPeers.Load().([]*lookupPeer))
+		if numLookupPeers == 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	test.Equal(t, 2, numLookupPeers)
 
 	var lookupPeers []string
 	for _, lp := range nsqd.lookupPeers.Load().([]*lookupPeer) {
 		lookupPeers = append(lookupPeers, lp.addr)
 	}
-	test.Equal(t, 2, len(lookupPeers))
 	test.Equal(t, newOpts.NSQLookupdTCPAddresses, lookupPeers)
 }
 
@@ -495,6 +511,7 @@ func TestSetHealth(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
 	nsqd := New(opts)
+	defer nsqd.Exit()
 
 	test.Equal(t, nil, nsqd.GetError())
 	test.Equal(t, true, nsqd.IsHealthy())
@@ -512,4 +529,21 @@ func TestSetHealth(t *testing.T) {
 	test.Nil(t, nsqd.GetError())
 	test.Equal(t, "OK", nsqd.GetHealth())
 	test.Equal(t, true, nsqd.IsHealthy())
+}
+
+func TestCrashingLogger(t *testing.T) {
+	if os.Getenv("BE_CRASHER") == "1" {
+		// Test invalid log level causes error
+		opts := NewOptions()
+		opts.LogLevel = "bad"
+		_ = New(opts)
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestCrashingLogger")
+	cmd.Env = append(os.Environ(), "BE_CRASHER=1")
+	err := cmd.Run()
+	if e, ok := err.(*exec.ExitError); ok && !e.Success() {
+		return
+	}
+	t.Fatalf("process ran with err %v, want exit status 1", err)
 }

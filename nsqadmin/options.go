@@ -2,10 +2,17 @@ package nsqadmin
 
 import (
 	"time"
+
+	"github.com/nsqio/nsq/internal/lg"
 )
 
 type Options struct {
-	LogPrefix   string `flag:"log-prefix"`
+	LogLevel  string `flag:"log-level"`
+	LogPrefix string `flag:"log-prefix"`
+	Verbose   bool   `flag:"verbose"` // for backwards compatibility
+	Logger    Logger
+	logLevel  lg.LogLevel // private, not really an option
+
 	HTTPAddress string `flag:"http-address"`
 
 	GraphiteURL   string `flag:"graphite-url"`
@@ -32,12 +39,14 @@ type Options struct {
 
 	NotificationHTTPEndpoint string `flag:"notification-http-endpoint"`
 
-	Logger Logger
+	AclHttpHeader string   `flag:"acl-http-header"`
+	AdminUsers    []string `flag:"admin-user" cfg:"admin_users"`
 }
 
 func NewOptions() *Options {
 	return &Options{
 		LogPrefix:                "[nsqadmin] ",
+		LogLevel:                 "info",
 		HTTPAddress:              "0.0.0.0:4171",
 		StatsdPrefix:             "nsq.%s",
 		StatsdCounterFormat:      "stats.counters.%s.count",
@@ -46,5 +55,7 @@ func NewOptions() *Options {
 		HTTPClientConnectTimeout: 2 * time.Second,
 		HTTPClientRequestTimeout: 5 * time.Second,
 		AllowConfigFromCIDR:      "127.0.0.1/8",
+		AclHttpHeader:            "X-Forwarded-User",
+		AdminUsers:               []string{},
 	}
 }

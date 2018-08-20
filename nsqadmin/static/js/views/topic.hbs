@@ -25,6 +25,7 @@
     </div>
 </div>
 {{else}}
+{{#if isAdmin}}
 <div class="row topic-actions">
     <div class="col-md-2">
         <button class="btn btn-medium btn-warning" data-action="empty">Empty Queue</button>
@@ -40,6 +41,7 @@
         {{/if}}
     </div>
 </div>
+{{/if}}
 
 <div class="row">
     <div class="col-md-12">
@@ -79,7 +81,7 @@
             {{#if ../graph_active}}
                 <td class="bold rate" target="{{rate "topic" node topic_name ""}}"></td>
             {{/if}}
-            <td>{{commafy ../channels.length}}</td>
+            <td>{{commafy this/channels.length}}</td>
             {{#if e2e_processing_latency.percentiles.length}}
                 {{#each e2e_processing_latency.percentiles}}
                 <td>

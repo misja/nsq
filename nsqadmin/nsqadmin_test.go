@@ -10,24 +10,15 @@ import (
 	"os/exec"
 	"testing"
 
+	"github.com/nsqio/nsq/internal/lg"
 	"github.com/nsqio/nsq/internal/test"
 	"github.com/nsqio/nsq/nsqd"
 )
 
-func TestNoLogger(t *testing.T) {
-	opts := NewOptions()
-	opts.Logger = nil
-	opts.HTTPAddress = "127.0.0.1:0"
-	opts.NSQLookupdHTTPAddresses = []string{"127.0.0.1:4161"}
-	nsqlookupd := New(opts)
-
-	nsqlookupd.logf("should never be logged")
-}
-
 func TestNeitherNSQDAndNSQLookup(t *testing.T) {
 	if os.Getenv("BE_CRASHER") == "1" {
 		opts := NewOptions()
-		opts.Logger = nil
+		opts.Logger = lg.NilLogger{}
 		opts.HTTPAddress = "127.0.0.1:0"
 		New(opts)
 		return
@@ -45,7 +36,7 @@ func TestNeitherNSQDAndNSQLookup(t *testing.T) {
 func TestBothNSQDAndNSQLookup(t *testing.T) {
 	if os.Getenv("BE_CRASHER") == "1" {
 		opts := NewOptions()
-		opts.Logger = nil
+		opts.Logger = lg.NilLogger{}
 		opts.HTTPAddress = "127.0.0.1:0"
 		opts.NSQLookupdHTTPAddresses = []string{"127.0.0.1:4161"}
 		opts.NSQDHTTPAddresses = []string{"127.0.0.1:4151"}
@@ -63,12 +54,14 @@ func TestBothNSQDAndNSQLookup(t *testing.T) {
 }
 
 func TestTLSHTTPClient(t *testing.T) {
+	lgr := test.NewTestLogger(t)
+
 	nsqdOpts := nsqd.NewOptions()
-	nsqdOpts.Verbose = true
 	nsqdOpts.TLSCert = "./test/server.pem"
-	nsqdOpts.TLSKey = "./test/server-key.pem"
+	nsqdOpts.TLSKey = "./test/server.key"
 	nsqdOpts.TLSRootCAFile = "./test/ca.pem"
 	nsqdOpts.TLSClientAuthPolicy = "require-verify"
+	nsqdOpts.Logger = lgr
 	_, nsqdHTTPAddr, nsqd := mustStartNSQD(nsqdOpts)
 	defer os.RemoveAll(nsqdOpts.DataPath)
 	defer nsqd.Exit()
@@ -78,7 +71,8 @@ func TestTLSHTTPClient(t *testing.T) {
 	opts.NSQDHTTPAddresses = []string{nsqdHTTPAddr.String()}
 	opts.HTTPClientTLSRootCAFile = "./test/ca.pem"
 	opts.HTTPClientTLSCert = "./test/client.pem"
-	opts.HTTPClientTLSKey = "./test/client-key.pem"
+	opts.HTTPClientTLSKey = "./test/client.key"
+	opts.Logger = lgr
 	nsqadmin := New(opts)
 	nsqadmin.Main()
 	defer nsqadmin.Exit()
@@ -91,9 +85,9 @@ func TestTLSHTTPClient(t *testing.T) {
 	}
 
 	resp, err := http.Get(u.String())
+	test.Equal(t, nil, err)
 	defer resp.Body.Close()
 
-	test.Equal(t, nil, err)
 	test.Equal(t, resp.StatusCode < 500, true)
 }
 
@@ -111,4 +105,22 @@ func mustStartNSQD(opts *nsqd.Options) (*net.TCPAddr, *net.TCPAddr, *nsqd.NSQD) 
 	nsqd := nsqd.New(opts)
 	nsqd.Main()
 	return nsqd.RealTCPAddr(), nsqd.RealHTTPAddr(), nsqd
+}
+
+func TestCrashingLogger(t *testing.T) {
+	if os.Getenv("BE_CRASHER") == "1" {
+		// Test invalid log level causes error
+		opts := NewOptions()
+		opts.LogLevel = "bad"
+		opts.NSQLookupdHTTPAddresses = []string{"127.0.0.1:4161"}
+		_ = New(opts)
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestCrashingLogger")
+	cmd.Env = append(os.Environ(), "BE_CRASHER=1")
+	err := cmd.Run()
+	if e, ok := err.(*exec.ExitError); ok && !e.Success() {
+		return
+	}
+	t.Fatalf("process ran with err %v, want exit status 1", err)
 }

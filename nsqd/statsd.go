@@ -3,11 +3,11 @@ package nsqd
 import (
 	"fmt"
 	"math"
-	"runtime"
-	"sort"
+	"net"
 	"time"
 
 	"github.com/nsqio/nsq/internal/statsd"
+	"github.com/nsqio/nsq/internal/writers"
 )
 
 type Uint64Slice []uint64
@@ -25,24 +25,29 @@ func (s Uint64Slice) Less(i, j int) bool {
 }
 
 func (n *NSQD) statsdLoop() {
-	var lastMemStats runtime.MemStats
+	var lastMemStats memStats
 	var lastStats []TopicStats
-	ticker := time.NewTicker(n.getOpts().StatsdInterval)
+	interval := n.getOpts().StatsdInterval
+	ticker := time.NewTicker(interval)
 	for {
 		select {
 		case <-n.exitChan:
 			goto exit
 		case <-ticker.C:
-			client := statsd.NewClient(n.getOpts().StatsdAddress, n.getOpts().StatsdPrefix)
-			err := client.CreateSocket()
+			addr := n.getOpts().StatsdAddress
+			prefix := n.getOpts().StatsdPrefix
+			conn, err := net.DialTimeout("udp", addr, time.Second)
 			if err != nil {
-				n.logf("ERROR: failed to create UDP socket to statsd(%s)", client)
+				n.logf(LOG_ERROR, "failed to create UDP socket to statsd(%s)", addr)
 				continue
 			}
+			sw := writers.NewSpreadWriter(conn, interval-time.Second, n.exitChan)
+			bw := writers.NewBoundaryBufferedWriter(sw, n.getOpts().StatsdUDPPacketSize)
+			client := statsd.NewClient(bw, prefix)
 
-			n.logf("STATSD: pushing stats to %s", client)
+			n.logf(LOG_INFO, "STATSD: pushing stats to %s", addr)
 
-			stats := n.GetStats()
+			stats := n.GetStats("", "")
 			for _, topic := range stats {
 				// try to find the topic in the last collection
 				lastTopic := TopicStats{}
@@ -115,37 +120,30 @@ func (n *NSQD) statsdLoop() {
 			lastStats = stats
 
 			if n.getOpts().StatsdMemStats {
-				var memStats runtime.MemStats
-				runtime.ReadMemStats(&memStats)
+				ms := getMemStats()
 
-				// sort the GC pause array
-				length := len(memStats.PauseNs)
-				if int(memStats.NumGC) < length {
-					length = int(memStats.NumGC)
-				}
-				gcPauses := make(Uint64Slice, length)
-				copy(gcPauses, memStats.PauseNs[:length])
-				sort.Sort(gcPauses)
+				client.Gauge("mem.heap_objects", int64(ms.HeapObjects))
+				client.Gauge("mem.heap_idle_bytes", int64(ms.HeapIdleBytes))
+				client.Gauge("mem.heap_in_use_bytes", int64(ms.HeapInUseBytes))
+				client.Gauge("mem.heap_released_bytes", int64(ms.HeapReleasedBytes))
+				client.Gauge("mem.gc_pause_usec_100", int64(ms.GCPauseUsec100))
+				client.Gauge("mem.gc_pause_usec_99", int64(ms.GCPauseUsec99))
+				client.Gauge("mem.gc_pause_usec_95", int64(ms.GCPauseUsec95))
+				client.Gauge("mem.next_gc_bytes", int64(ms.NextGCBytes))
+				client.Incr("mem.gc_runs", int64(ms.GCTotalRuns-lastMemStats.GCTotalRuns))
 
-				client.Gauge("mem.heap_objects", int64(memStats.HeapObjects))
-				client.Gauge("mem.heap_idle_bytes", int64(memStats.HeapIdle))
-				client.Gauge("mem.heap_in_use_bytes", int64(memStats.HeapInuse))
-				client.Gauge("mem.heap_released_bytes", int64(memStats.HeapReleased))
-				client.Gauge("mem.gc_pause_usec_100", int64(percentile(100.0, gcPauses, len(gcPauses))/1000))
-				client.Gauge("mem.gc_pause_usec_99", int64(percentile(99.0, gcPauses, len(gcPauses))/1000))
-				client.Gauge("mem.gc_pause_usec_95", int64(percentile(95.0, gcPauses, len(gcPauses))/1000))
-				client.Gauge("mem.next_gc_bytes", int64(memStats.NextGC))
-				client.Incr("mem.gc_runs", int64(memStats.NumGC-lastMemStats.NumGC))
-
-				lastMemStats = memStats
+				lastMemStats = ms
 			}
 
-			client.Close()
+			bw.Flush()
+			sw.Flush()
+			conn.Close()
 		}
 	}
 
 exit:
 	ticker.Stop()
+	n.logf(LOG_INFO, "STATSD: closing")
 }
 
 func percentile(perc float64, arr []uint64, length int) uint64 {

@@ -22,6 +22,7 @@ import (
 	"github.com/nsqio/nsq/internal/clusterinfo"
 	"github.com/nsqio/nsq/internal/dirlock"
 	"github.com/nsqio/nsq/internal/http_api"
+	"github.com/nsqio/nsq/internal/lg"
 	"github.com/nsqio/nsq/internal/protocol"
 	"github.com/nsqio/nsq/internal/statsd"
 	"github.com/nsqio/nsq/internal/util"
@@ -86,25 +87,36 @@ func New(opts *Options) *NSQD {
 		exitChan:             make(chan int),
 		notifyChan:           make(chan interface{}),
 		optsNotificationChan: make(chan struct{}, 1),
-		ci:                   clusterinfo.New(opts.Logger, http_api.NewClient(nil, opts.HTTPClientConnectTimeout, opts.HTTPClientRequestTimeout)),
 		dl:                   dirlock.New(dataPath),
 	}
+	httpcli := http_api.NewClient(nil, opts.HTTPClientConnectTimeout, opts.HTTPClientRequestTimeout)
+	n.ci = clusterinfo.New(n.logf, httpcli)
+
+	n.lookupPeers.Store([]*lookupPeer{})
+
 	n.swapOpts(opts)
 	n.errValue.Store(errStore{})
 
-	err := n.dl.Lock()
+	var err error
+	opts.logLevel, err = lg.ParseLogLevel(opts.LogLevel, opts.Verbose)
 	if err != nil {
-		n.logf("FATAL: --data-path=%s in use (possibly by another instance of nsqd)", dataPath)
+		n.logf(LOG_FATAL, "%s", err)
+		os.Exit(1)
+	}
+
+	err = n.dl.Lock()
+	if err != nil {
+		n.logf(LOG_FATAL, "--data-path=%s in use (possibly by another instance of nsqd)", dataPath)
 		os.Exit(1)
 	}
 
 	if opts.MaxDeflateLevel < 1 || opts.MaxDeflateLevel > 9 {
-		n.logf("FATAL: --max-deflate-level must be [1,9]")
+		n.logf(LOG_FATAL, "--max-deflate-level must be [1,9]")
 		os.Exit(1)
 	}
 
 	if opts.ID < 0 || opts.ID >= 1024 {
-		n.logf("FATAL: --node-id must be [0,1024)")
+		n.logf(LOG_FATAL, "--node-id must be [0,1024)")
 		os.Exit(1)
 	}
 
@@ -112,7 +124,7 @@ func New(opts *Options) *NSQD {
 		var port string
 		_, port, err = net.SplitHostPort(opts.HTTPAddress)
 		if err != nil {
-			n.logf("ERROR: failed to parse HTTP address (%s) - %s", opts.HTTPAddress, err)
+			n.logf(LOG_FATAL, "failed to parse HTTP address (%s) - %s", opts.HTTPAddress, err)
 			os.Exit(1)
 		}
 		statsdHostKey := statsd.HostKey(net.JoinHostPort(opts.BroadcastAddress, port))
@@ -129,23 +141,26 @@ func New(opts *Options) *NSQD {
 
 	tlsConfig, err := buildTLSConfig(opts)
 	if err != nil {
-		n.logf("FATAL: failed to build TLS config - %s", err)
+		n.logf(LOG_FATAL, "failed to build TLS config - %s", err)
 		os.Exit(1)
 	}
 	if tlsConfig == nil && opts.TLSRequired != TLSNotRequired {
-		n.logf("FATAL: cannot require TLS client connections without TLS key and cert")
+		n.logf(LOG_FATAL, "cannot require TLS client connections without TLS key and cert")
 		os.Exit(1)
 	}
 	n.tlsConfig = tlsConfig
 
-	n.logf(version.String("nsqd"))
-	n.logf("ID: %d", opts.ID)
+	for _, v := range opts.E2EProcessingLatencyPercentiles {
+		if v <= 0 || v > 1 {
+			n.logf(LOG_FATAL, "Invalid percentile: %v", v)
+			os.Exit(1)
+		}
+	}
+
+	n.logf(LOG_INFO, version.String("nsqd"))
+	n.logf(LOG_INFO, "ID: %d", opts.ID)
 
 	return n
-}
-
-func (n *NSQD) logf(f string, args ...interface{}) {
-	n.getOpts().Logger.Output(2, fmt.Sprintf(f, args...))
 }
 
 func (n *NSQD) getOpts() *Options {
@@ -164,20 +179,14 @@ func (n *NSQD) triggerOptsNotification() {
 }
 
 func (n *NSQD) RealTCPAddr() *net.TCPAddr {
-	n.RLock()
-	defer n.RUnlock()
 	return n.tcpListener.Addr().(*net.TCPAddr)
 }
 
 func (n *NSQD) RealHTTPAddr() *net.TCPAddr {
-	n.RLock()
-	defer n.RUnlock()
 	return n.httpListener.Addr().(*net.TCPAddr)
 }
 
 func (n *NSQD) RealHTTPSAddr() *net.TCPAddr {
-	n.RLock()
-	defer n.RUnlock()
 	return n.httpsListener.Addr().(*net.TCPAddr)
 }
 
@@ -207,55 +216,46 @@ func (n *NSQD) GetStartTime() time.Time {
 }
 
 func (n *NSQD) Main() {
-	var httpListener net.Listener
-	var httpsListener net.Listener
-
+	var err error
 	ctx := &context{n}
 
-	tcpListener, err := net.Listen("tcp", n.getOpts().TCPAddress)
+	n.tcpListener, err = net.Listen("tcp", n.getOpts().TCPAddress)
 	if err != nil {
-		n.logf("FATAL: listen (%s) failed - %s", n.getOpts().TCPAddress, err)
+		n.logf(LOG_FATAL, "listen (%s) failed - %s", n.getOpts().TCPAddress, err)
 		os.Exit(1)
 	}
-	n.Lock()
-	n.tcpListener = tcpListener
-	n.Unlock()
-	tcpServer := &tcpServer{ctx: ctx}
-	n.waitGroup.Wrap(func() {
-		protocol.TCPServer(n.tcpListener, tcpServer, n.getOpts().Logger)
-	})
-
+	n.httpListener, err = net.Listen("tcp", n.getOpts().HTTPAddress)
+	if err != nil {
+		n.logf(LOG_FATAL, "listen (%s) failed - %s", n.getOpts().HTTPAddress, err)
+		os.Exit(1)
+	}
 	if n.tlsConfig != nil && n.getOpts().HTTPSAddress != "" {
-		httpsListener, err = tls.Listen("tcp", n.getOpts().HTTPSAddress, n.tlsConfig)
+		n.httpsListener, err = tls.Listen("tcp", n.getOpts().HTTPSAddress, n.tlsConfig)
 		if err != nil {
-			n.logf("FATAL: listen (%s) failed - %s", n.getOpts().HTTPSAddress, err)
+			n.logf(LOG_FATAL, "listen (%s) failed - %s", n.getOpts().HTTPSAddress, err)
 			os.Exit(1)
 		}
-		n.Lock()
-		n.httpsListener = httpsListener
-		n.Unlock()
-		httpsServer := newHTTPServer(ctx, true, true)
-		n.waitGroup.Wrap(func() {
-			http_api.Serve(n.httpsListener, httpsServer, "HTTPS", n.getOpts().Logger)
-		})
 	}
-	httpListener, err = net.Listen("tcp", n.getOpts().HTTPAddress)
-	if err != nil {
-		n.logf("FATAL: listen (%s) failed - %s", n.getOpts().HTTPAddress, err)
-		os.Exit(1)
-	}
-	n.Lock()
-	n.httpListener = httpListener
-	n.Unlock()
+
+	tcpServer := &tcpServer{ctx: ctx}
+	n.waitGroup.Wrap(func() {
+		protocol.TCPServer(n.tcpListener, tcpServer, n.logf)
+	})
 	httpServer := newHTTPServer(ctx, false, n.getOpts().TLSRequired == TLSRequired)
 	n.waitGroup.Wrap(func() {
-		http_api.Serve(n.httpListener, httpServer, "HTTP", n.getOpts().Logger)
+		http_api.Serve(n.httpListener, httpServer, "HTTP", n.logf)
 	})
+	if n.tlsConfig != nil && n.getOpts().HTTPSAddress != "" {
+		httpsServer := newHTTPServer(ctx, true, true)
+		n.waitGroup.Wrap(func() {
+			http_api.Serve(n.httpsListener, httpsServer, "HTTPS", n.logf)
+		})
+	}
 
-	n.waitGroup.Wrap(func() { n.queueScanLoop() })
-	n.waitGroup.Wrap(func() { n.lookupLoop() })
+	n.waitGroup.Wrap(n.queueScanLoop)
+	n.waitGroup.Wrap(n.lookupLoop)
 	if n.getOpts().StatsdAddress != "" {
-		n.waitGroup.Wrap(func() { n.statsdLoop() })
+		n.waitGroup.Wrap(n.statsdLoop)
 	}
 }
 
@@ -341,17 +341,16 @@ func (n *NSQD) LoadMetadata() error {
 
 	for _, t := range m.Topics {
 		if !protocol.IsValidTopicName(t.Name) {
-			n.logf("WARNING: skipping creation of invalid topic %s", t.Name)
+			n.logf(LOG_WARN, "skipping creation of invalid topic %s", t.Name)
 			continue
 		}
 		topic := n.GetTopic(t.Name)
 		if t.Paused {
 			topic.Pause()
 		}
-
 		for _, c := range t.Channels {
 			if !protocol.IsValidChannelName(c.Name) {
-				n.logf("WARNING: skipping creation of invalid channel %s", c.Name)
+				n.logf(LOG_WARN, "skipping creation of invalid channel %s", c.Name)
 				continue
 			}
 			channel := topic.GetChannel(c.Name)
@@ -359,6 +358,7 @@ func (n *NSQD) LoadMetadata() error {
 				channel.Pause()
 			}
 		}
+		topic.Start()
 	}
 	return nil
 }
@@ -369,7 +369,7 @@ func (n *NSQD) PersistMetadata() error {
 	// old metadata filename with ID, maintained in parallel to enable roll-back
 	fileNameID := oldMetadataFile(n.getOpts())
 
-	n.logf("NSQ: persisting topic/channel metadata to %s", fileName)
+	n.logf(LOG_INFO, "NSQ: persisting topic/channel metadata to %s", fileName)
 
 	js := make(map[string]interface{})
 	topics := []interface{}{}
@@ -464,18 +464,19 @@ func (n *NSQD) Exit() {
 	n.Lock()
 	err := n.PersistMetadata()
 	if err != nil {
-		n.logf("ERROR: failed to persist metadata - %s", err)
+		n.logf(LOG_ERROR, "failed to persist metadata - %s", err)
 	}
-	n.logf("NSQ: closing topics")
+	n.logf(LOG_INFO, "NSQ: closing topics")
 	for _, topic := range n.topicMap {
 		topic.Close()
 	}
 	n.Unlock()
 
+	n.logf(LOG_INFO, "NSQ: stopping subsystems")
 	close(n.exitChan)
 	n.waitGroup.Wait()
-
 	n.dl.Unlock()
+	n.logf(LOG_INFO, "NSQ: bye")
 }
 
 // GetTopic performs a thread safe operation
@@ -502,12 +503,15 @@ func (n *NSQD) GetTopic(topicName string) *Topic {
 	t = NewTopic(topicName, &context{n}, deleteCallback)
 	n.topicMap[topicName] = t
 
-	n.logf("TOPIC(%s): created", t.name)
-
-	// release our global nsqd lock, and switch to a more granular topic lock while we init our
-	// channels from lookupd. This blocks concurrent PutMessages to this topic.
-	t.Lock()
 	n.Unlock()
+
+	n.logf(LOG_INFO, "TOPIC(%s): created", t.name)
+	// topic is created but messagePump not yet started
+
+	// if loading metadata at startup, no lookupd connections yet, topic started after load
+	if atomic.LoadInt32(&n.isLoading) == 1 {
+		return t
+	}
 
 	// if using lookupd, make a blocking call to get the topics, and immediately create them.
 	// this makes sure that any message received is buffered to the right channels
@@ -515,32 +519,20 @@ func (n *NSQD) GetTopic(topicName string) *Topic {
 	if len(lookupdHTTPAddrs) > 0 {
 		channelNames, err := n.ci.GetLookupdTopicChannels(t.name, lookupdHTTPAddrs)
 		if err != nil {
-			n.logf("WARNING: failed to query nsqlookupd for channels to pre-create for topic %s - %s", t.name, err)
+			n.logf(LOG_WARN, "failed to query nsqlookupd for channels to pre-create for topic %s - %s", t.name, err)
 		}
 		for _, channelName := range channelNames {
 			if strings.HasSuffix(channelName, "#ephemeral") {
-				// we don't want to pre-create ephemeral channels
-				// because there isn't a client connected
-				continue
+				continue // do not create ephemeral channel with no consumer client
 			}
-			t.getOrCreateChannel(channelName)
+			t.GetChannel(channelName)
 		}
 	} else if len(n.getOpts().NSQLookupdTCPAddresses) > 0 {
-		n.logf("ERROR: no available nsqlookupd to query for channels to pre-create for topic %s", t.name)
+		n.logf(LOG_ERROR, "no available nsqlookupd to query for channels to pre-create for topic %s", t.name)
 	}
 
-	t.Unlock()
-
-	// NOTE: I would prefer for this to only happen in topic.GetChannel() but we're special
-	// casing the code above so that we can control the locks such that it is impossible
-	// for a message to be written to a (new) topic while we're looking up channels
-	// from lookupd...
-	//
-	// update messagePump state
-	select {
-	case t.channelUpdateChan <- 1:
-	case <-t.exitChan:
-	}
+	// now that all channels are added, start topic messagePump
+	t.Start()
 	return t
 }
 
@@ -597,7 +589,7 @@ func (n *NSQD) Notify(v interface{}) {
 			n.Lock()
 			err := n.PersistMetadata()
 			if err != nil {
-				n.logf("ERROR: failed to persist metadata - %s", err)
+				n.logf(LOG_ERROR, "failed to persist metadata - %s", err)
 			}
 			n.Unlock()
 		}
@@ -729,7 +721,7 @@ func (n *NSQD) queueScanLoop() {
 	}
 
 exit:
-	n.logf("QUEUESCAN: closing")
+	n.logf(LOG_INFO, "QUEUESCAN: closing")
 	close(closeCh)
 	workTicker.Stop()
 	refreshTicker.Stop()

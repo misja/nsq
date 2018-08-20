@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"strings"
+
 	"github.com/nsqio/go-nsq"
 	"github.com/nsqio/nsq/internal/test"
 	"github.com/nsqio/nsq/internal/version"
@@ -170,6 +172,35 @@ func TestHTTPmpubBinary(t *testing.T) {
 	test.Equal(t, int64(5), topic.Depth())
 }
 
+func TestHTTPmpubForNonNormalizedBinaryParam(t *testing.T) {
+	opts := NewOptions()
+	opts.Logger = test.NewTestLogger(t)
+	_, httpAddr, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topicName := "test_http_mpub_bin" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopic(topicName)
+
+	mpub := make([][]byte, 5)
+	for i := range mpub {
+		mpub[i] = make([]byte, 100)
+	}
+	cmd, _ := nsq.MultiPublish(topicName, mpub)
+	buf := bytes.NewBuffer(cmd.Body)
+
+	url := fmt.Sprintf("http://%s/mpub?topic=%s&binary=non_normalized_binary_param", httpAddr, topicName)
+	resp, err := http.Post(url, "application/octet-stream", buf)
+	test.Nil(t, err)
+	defer resp.Body.Close()
+	body, _ := ioutil.ReadAll(resp.Body)
+	test.Equal(t, "OK", string(body))
+
+	time.Sleep(5 * time.Millisecond)
+
+	test.Equal(t, int64(5), topic.Depth())
+}
+
 func TestHTTPpubDefer(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
@@ -200,7 +231,7 @@ func TestHTTPpubDefer(t *testing.T) {
 func TestHTTPSRequire(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	opts.TLSCert = "./test/certs/server.pem"
 	opts.TLSKey = "./test/certs/server.key"
 	opts.TLSClientAuthPolicy = "require"
@@ -245,7 +276,7 @@ func TestHTTPSRequire(t *testing.T) {
 func TestHTTPSRequireVerify(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	opts.TLSCert = "./test/certs/server.pem"
 	opts.TLSKey = "./test/certs/server.key"
 	opts.TLSRootCAFile = "./test/certs/ca.pem"
@@ -309,7 +340,7 @@ func TestHTTPSRequireVerify(t *testing.T) {
 func TestTLSRequireVerifyExceptHTTP(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.Verbose = true
+	opts.LogLevel = "debug"
 	opts.TLSCert = "./test/certs/server.pem"
 	opts.TLSKey = "./test/certs/server.key"
 	opts.TLSRootCAFile = "./test/certs/ca.pem"
@@ -478,7 +509,7 @@ func TestHTTPgetStatusJSON(t *testing.T) {
 	defer nsqd.Exit()
 
 	nsqd.startTime = testTime
-	expectedJSON := fmt.Sprintf(`{"version":"%v","health":"OK","start_time":%v,"topics":[]}`, version.Binary, testTime.Unix())
+	expectedJSON := fmt.Sprintf(`{"version":"%v","health":"OK","start_time":%v,"topics":[],"memory":{`, version.Binary, testTime.Unix())
 
 	url := fmt.Sprintf("http://%s/stats?format=json", httpAddr)
 	resp, err := http.Get(url)
@@ -486,7 +517,7 @@ func TestHTTPgetStatusJSON(t *testing.T) {
 	defer resp.Body.Close()
 	body, _ := ioutil.ReadAll(resp.Body)
 	test.Equal(t, 200, resp.StatusCode)
-	test.Equal(t, expectedJSON, string(body))
+	test.Equal(t, true, strings.HasPrefix(string(body), expectedJSON))
 }
 
 func TestHTTPgetStatusText(t *testing.T) {
@@ -511,9 +542,12 @@ func TestHTTPgetStatusText(t *testing.T) {
 func TestHTTPconfig(t *testing.T) {
 	lopts := nsqlookupd.NewOptions()
 	lopts.Logger = test.NewTestLogger(t)
-	_, _, lookupd1 := mustStartNSQLookupd(lopts)
+
+	lopts1 := *lopts
+	_, _, lookupd1 := mustStartNSQLookupd(&lopts1)
 	defer lookupd1.Exit()
-	_, _, lookupd2 := mustStartNSQLookupd(lopts)
+	lopts2 := *lopts
+	_, _, lookupd2 := mustStartNSQLookupd(&lopts2)
 	defer lookupd2.Exit()
 
 	opts := NewOptions()
@@ -541,6 +575,44 @@ func TestHTTPconfig(t *testing.T) {
 	body, _ = ioutil.ReadAll(resp.Body)
 	test.Equal(t, 200, resp.StatusCode)
 	test.Equal(t, addrs, string(body))
+
+	url = fmt.Sprintf("http://%s/config/log_level", httpAddr)
+	req, err = http.NewRequest("PUT", url, bytes.NewBuffer([]byte(`fatal`)))
+	test.Nil(t, err)
+	resp, err = client.Do(req)
+	test.Nil(t, err)
+	defer resp.Body.Close()
+	body, _ = ioutil.ReadAll(resp.Body)
+	test.Equal(t, 200, resp.StatusCode)
+	test.Equal(t, LOG_FATAL, nsqd.getOpts().logLevel)
+
+	url = fmt.Sprintf("http://%s/config/log_level", httpAddr)
+	req, err = http.NewRequest("PUT", url, bytes.NewBuffer([]byte(`bad`)))
+	test.Nil(t, err)
+	resp, err = client.Do(req)
+	test.Nil(t, err)
+	defer resp.Body.Close()
+	body, _ = ioutil.ReadAll(resp.Body)
+	test.Equal(t, 400, resp.StatusCode)
+
+	url = fmt.Sprintf("http://%s/config/verbose", httpAddr)
+	req, err = http.NewRequest("PUT", url, bytes.NewBuffer([]byte(`true`)))
+	test.Nil(t, err)
+	resp, err = client.Do(req)
+	test.Nil(t, err)
+	defer resp.Body.Close()
+	body, _ = ioutil.ReadAll(resp.Body)
+	test.Equal(t, 200, resp.StatusCode)
+	test.Equal(t, true, nsqd.getOpts().Verbose)
+
+	url = fmt.Sprintf("http://%s/config/verbose", httpAddr)
+	req, err = http.NewRequest("PUT", url, bytes.NewBuffer([]byte(`bad`)))
+	test.Nil(t, err)
+	resp, err = client.Do(req)
+	test.Nil(t, err)
+	defer resp.Body.Close()
+	body, _ = ioutil.ReadAll(resp.Body)
+	test.Equal(t, 400, resp.StatusCode)
 }
 
 func TestHTTPerrors(t *testing.T) {

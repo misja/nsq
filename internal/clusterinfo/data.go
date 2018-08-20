@@ -11,6 +11,7 @@ import (
 
 	"github.com/blang/semver"
 	"github.com/nsqio/nsq/internal/http_api"
+	"github.com/nsqio/nsq/internal/lg"
 	"github.com/nsqio/nsq/internal/stringy"
 )
 
@@ -33,16 +34,12 @@ func (l ErrList) Errors() []error {
 	return l
 }
 
-type logger interface {
-	Output(maxdepth int, s string) error
-}
-
 type ClusterInfo struct {
-	log    logger
+	log    lg.AppLogFunc
 	client *http_api.Client
 }
 
-func New(log logger, client *http_api.Client) *ClusterInfo {
+func New(log lg.AppLogFunc, client *http_api.Client) *ClusterInfo {
 	return &ClusterInfo{
 		log:    log,
 		client: client,
@@ -50,17 +47,16 @@ func New(log logger, client *http_api.Client) *ClusterInfo {
 }
 
 func (c *ClusterInfo) logf(f string, args ...interface{}) {
-	if c.log == nil {
-		return
+	if c.log != nil {
+		c.log(lg.INFO, f, args...)
 	}
-	c.log.Output(2, fmt.Sprintf(f, args...))
 }
 
 // GetVersion returns a semver.Version object by querying /info
 func (c *ClusterInfo) GetVersion(addr string) (semver.Version, error) {
 	endpoint := fmt.Sprintf("http://%s/info", addr)
 	var resp struct {
-		Version string `json:'version'`
+		Version string `json:"version"`
 	}
 	err := c.client.GETV1(endpoint, &resp)
 	if err != nil {
@@ -454,7 +450,7 @@ func (c *ClusterInfo) GetNSQDTopicProducers(topic string, nsqdHTTPAddrs []string
 		go func(addr string) {
 			defer wg.Done()
 
-			endpoint := fmt.Sprintf("http://%s/stats?format=json", addr)
+			endpoint := fmt.Sprintf("http://%s/stats?format=json&topic=%s", addr, url.QueryEscape(topic))
 			c.logf("CI: querying nsqd %s", endpoint)
 
 			var statsResp statsRespType
@@ -532,9 +528,10 @@ func (c *ClusterInfo) GetNSQDTopicProducers(topic string, nsqdHTTPAddrs []string
 
 // GetNSQDStats returns aggregate topic and channel stats from the given Producers
 //
+// if selectedChannel is empty, this will return stats for topic/channel
 // if selectedTopic is empty, this will return stats for *all* topic/channels
 // and the ChannelStats dict will be keyed by topic + ':' + channel
-func (c *ClusterInfo) GetNSQDStats(producers Producers, selectedTopic string) ([]*TopicStats, map[string]*ChannelStats, error) {
+func (c *ClusterInfo) GetNSQDStats(producers Producers, selectedTopic string, selectedChannel string) ([]*TopicStats, map[string]*ChannelStats, error) {
 	var lock sync.Mutex
 	var wg sync.WaitGroup
 	var topicStatsList TopicStatsList
@@ -552,7 +549,15 @@ func (c *ClusterInfo) GetNSQDStats(producers Producers, selectedTopic string) ([
 			defer wg.Done()
 
 			addr := p.HTTPAddress()
+
 			endpoint := fmt.Sprintf("http://%s/stats?format=json", addr)
+			if selectedTopic != "" {
+				endpoint += "&topic=" + url.QueryEscape(selectedTopic)
+				if selectedChannel != "" {
+					endpoint += "&channel=" + url.QueryEscape(selectedChannel)
+				}
+			}
+
 			c.logf("CI: querying nsqd %s", endpoint)
 
 			var resp respType

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/nsqio/go-diskqueue"
+	"github.com/nsqio/nsq/internal/lg"
 	"github.com/nsqio/nsq/internal/quantile"
 	"github.com/nsqio/nsq/internal/util"
 )
@@ -23,6 +24,7 @@ type Topic struct {
 	channelMap        map[string]*Channel
 	backend           BackendQueue
 	memoryMsgChan     chan *Message
+	startChan         chan int
 	exitChan          chan int
 	channelUpdateChan chan int
 	waitGroup         util.WaitGroupWrapper
@@ -34,7 +36,7 @@ type Topic struct {
 	deleter        sync.Once
 
 	paused    int32
-	pauseChan chan bool
+	pauseChan chan int
 
 	ctx *context
 }
@@ -45,10 +47,12 @@ func NewTopic(topicName string, ctx *context, deleteCallback func(*Topic)) *Topi
 		name:              topicName,
 		channelMap:        make(map[string]*Channel),
 		memoryMsgChan:     make(chan *Message, ctx.nsqd.getOpts().MemQueueSize),
+		startChan:         make(chan int, 1),
 		exitChan:          make(chan int),
 		channelUpdateChan: make(chan int),
 		ctx:               ctx,
-		pauseChan:         make(chan bool),
+		paused:            0,
+		pauseChan:         make(chan int),
 		deleteCallback:    deleteCallback,
 		idFactory:         NewGUIDFactory(ctx.nsqd.getOpts().ID),
 	}
@@ -57,21 +61,34 @@ func NewTopic(topicName string, ctx *context, deleteCallback func(*Topic)) *Topi
 		t.ephemeral = true
 		t.backend = newDummyBackendQueue()
 	} else {
-		t.backend = diskqueue.New(topicName,
+		dqLogf := func(level diskqueue.LogLevel, f string, args ...interface{}) {
+			opts := ctx.nsqd.getOpts()
+			lg.Logf(opts.Logger, opts.logLevel, lg.LogLevel(level), f, args...)
+		}
+		t.backend = diskqueue.New(
+			topicName,
 			ctx.nsqd.getOpts().DataPath,
 			ctx.nsqd.getOpts().MaxBytesPerFile,
 			int32(minValidMsgLength),
 			int32(ctx.nsqd.getOpts().MaxMsgSize)+minValidMsgLength,
 			ctx.nsqd.getOpts().SyncEvery,
 			ctx.nsqd.getOpts().SyncTimeout,
-			ctx.nsqd.getOpts().Logger)
+			dqLogf,
+		)
 	}
 
-	t.waitGroup.Wrap(func() { t.messagePump() })
+	t.waitGroup.Wrap(t.messagePump)
 
 	t.ctx.nsqd.Notify(t)
 
 	return t
+}
+
+func (t *Topic) Start() {
+	select {
+	case t.startChan <- 1:
+	default:
+	}
 }
 
 // Exiting returns a boolean indicating if this topic is closed/exiting
@@ -107,7 +124,7 @@ func (t *Topic) getOrCreateChannel(channelName string) (*Channel, bool) {
 		}
 		channel = NewChannel(t.name, channelName, t.ctx, deleteCallback)
 		t.channelMap[channelName] = channel
-		t.ctx.nsqd.logf("TOPIC(%s): new channel(%s)", t.name, channel.name)
+		t.ctx.nsqd.logf(LOG_INFO, "TOPIC(%s): new channel(%s)", t.name, channel.name)
 		return channel, true
 	}
 	return channel, false
@@ -136,7 +153,7 @@ func (t *Topic) DeleteExistingChannel(channelName string) error {
 	numChannels := len(t.channelMap)
 	t.Unlock()
 
-	t.ctx.nsqd.logf("TOPIC(%s): deleting channel %s", t.name, channel.name)
+	t.ctx.nsqd.logf(LOG_INFO, "TOPIC(%s): deleting channel %s", t.name, channel.name)
 
 	// delete empties the channel before closing
 	// (so that we dont leave any messages around)
@@ -196,7 +213,7 @@ func (t *Topic) put(m *Message) error {
 		bufferPoolPut(b)
 		t.ctx.nsqd.SetHealth(err)
 		if err != nil {
-			t.ctx.nsqd.logf(
+			t.ctx.nsqd.logf(LOG_ERROR,
 				"TOPIC(%s) ERROR: failed to write message to backend - %s",
 				t.name, err)
 			return err
@@ -219,24 +236,37 @@ func (t *Topic) messagePump() {
 	var memoryMsgChan chan *Message
 	var backendChan chan []byte
 
+	// do not pass messages before Start(), but avoid blocking Pause() or GetChannel()
+	for {
+		select {
+		case <-t.channelUpdateChan:
+			continue
+		case <-t.pauseChan:
+			continue
+		case <-t.exitChan:
+			goto exit
+		case <-t.startChan:
+		}
+		break
+	}
 	t.RLock()
 	for _, c := range t.channelMap {
 		chans = append(chans, c)
 	}
 	t.RUnlock()
-
-	if len(chans) > 0 {
+	if len(chans) > 0 && !t.IsPaused() {
 		memoryMsgChan = t.memoryMsgChan
 		backendChan = t.backend.ReadChan()
 	}
 
+	// main message loop
 	for {
 		select {
 		case msg = <-memoryMsgChan:
 		case buf = <-backendChan:
 			msg, err = decodeMessage(buf)
 			if err != nil {
-				t.ctx.nsqd.logf("ERROR: failed to decode message - %s", err)
+				t.ctx.nsqd.logf(LOG_ERROR, "failed to decode message - %s", err)
 				continue
 			}
 		case <-t.channelUpdateChan:
@@ -254,8 +284,8 @@ func (t *Topic) messagePump() {
 				backendChan = t.backend.ReadChan()
 			}
 			continue
-		case pause := <-t.pauseChan:
-			if pause || len(chans) == 0 {
+		case <-t.pauseChan:
+			if len(chans) == 0 || t.IsPaused() {
 				memoryMsgChan = nil
 				backendChan = nil
 			} else {
@@ -284,7 +314,7 @@ func (t *Topic) messagePump() {
 			}
 			err := channel.PutMessage(chanMsg)
 			if err != nil {
-				t.ctx.nsqd.logf(
+				t.ctx.nsqd.logf(LOG_ERROR,
 					"TOPIC(%s) ERROR: failed to put msg(%s) to channel(%s) - %s",
 					t.name, msg.ID, channel.name, err)
 			}
@@ -292,7 +322,7 @@ func (t *Topic) messagePump() {
 	}
 
 exit:
-	t.ctx.nsqd.logf("TOPIC(%s): closing ... messagePump", t.name)
+	t.ctx.nsqd.logf(LOG_INFO, "TOPIC(%s): closing ... messagePump", t.name)
 }
 
 // Delete empties the topic and all its channels and closes
@@ -311,13 +341,13 @@ func (t *Topic) exit(deleted bool) error {
 	}
 
 	if deleted {
-		t.ctx.nsqd.logf("TOPIC(%s): deleting", t.name)
+		t.ctx.nsqd.logf(LOG_INFO, "TOPIC(%s): deleting", t.name)
 
 		// since we are explicitly deleting a topic (not just at system exit time)
 		// de-register this from the lookupd
 		t.ctx.nsqd.Notify(t)
 	} else {
-		t.ctx.nsqd.logf("TOPIC(%s): closing", t.name)
+		t.ctx.nsqd.logf(LOG_INFO, "TOPIC(%s): closing", t.name)
 	}
 
 	close(t.exitChan)
@@ -343,7 +373,7 @@ func (t *Topic) exit(deleted bool) error {
 		err := channel.Close()
 		if err != nil {
 			// we need to continue regardless of error to close all the channels
-			t.ctx.nsqd.logf("ERROR: channel(%s) close - %s", channel.name, err)
+			t.ctx.nsqd.logf(LOG_ERROR, "channel(%s) close - %s", channel.name, err)
 		}
 	}
 
@@ -369,7 +399,7 @@ func (t *Topic) flush() error {
 	var msgBuf bytes.Buffer
 
 	if len(t.memoryMsgChan) > 0 {
-		t.ctx.nsqd.logf(
+		t.ctx.nsqd.logf(LOG_INFO,
 			"TOPIC(%s): flushing %d memory messages to backend",
 			t.name, len(t.memoryMsgChan))
 	}
@@ -379,7 +409,7 @@ func (t *Topic) flush() error {
 		case msg := <-t.memoryMsgChan:
 			err := writeMessageToBackend(&msgBuf, msg, t.backend)
 			if err != nil {
-				t.ctx.nsqd.logf(
+				t.ctx.nsqd.logf(LOG_ERROR,
 					"ERROR: failed to write message to backend - %s", err)
 			}
 		default:
@@ -429,7 +459,7 @@ func (t *Topic) doPause(pause bool) error {
 	}
 
 	select {
-	case t.pauseChan <- pause:
+	case t.pauseChan <- 1:
 	case <-t.exitChan:
 	}
 

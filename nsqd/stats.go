@@ -1,6 +1,7 @@
 package nsqd
 
 import (
+	"runtime"
 	"sort"
 	"sync/atomic"
 
@@ -47,12 +48,19 @@ type ChannelStats struct {
 }
 
 func NewChannelStats(c *Channel, clients []ClientStats) ChannelStats {
+	c.inFlightMutex.Lock()
+	inflight := len(c.inFlightMessages)
+	c.inFlightMutex.Unlock()
+	c.deferredMutex.Lock()
+	deferred := len(c.deferredMessages)
+	c.deferredMutex.Unlock()
+
 	return ChannelStats{
 		ChannelName:   c.name,
 		Depth:         c.Depth(),
 		BackendDepth:  c.backend.Depth(),
-		InFlightCount: len(c.inFlightMessages),
-		DeferredCount: len(c.deferredMessages),
+		InFlightCount: inflight,
+		DeferredCount: deferred,
 		MessageCount:  atomic.LoadUint64(&c.messageCount),
 		RequeueCount:  atomic.LoadUint64(&c.requeueCount),
 		TimeoutCount:  atomic.LoadUint64(&c.timeoutCount),
@@ -112,20 +120,36 @@ type ChannelsByName struct {
 
 func (c ChannelsByName) Less(i, j int) bool { return c.Channels[i].name < c.Channels[j].name }
 
-func (n *NSQD) GetStats() []TopicStats {
+func (n *NSQD) GetStats(topic string, channel string) []TopicStats {
 	n.RLock()
-	realTopics := make([]*Topic, 0, len(n.topicMap))
-	for _, t := range n.topicMap {
-		realTopics = append(realTopics, t)
+	var realTopics []*Topic
+	if topic == "" {
+		realTopics = make([]*Topic, 0, len(n.topicMap))
+		for _, t := range n.topicMap {
+			realTopics = append(realTopics, t)
+		}
+	} else if val, exists := n.topicMap[topic]; exists {
+		realTopics = []*Topic{val}
+	} else {
+		n.RUnlock()
+		return []TopicStats{}
 	}
 	n.RUnlock()
 	sort.Sort(TopicsByName{realTopics})
 	topics := make([]TopicStats, 0, len(realTopics))
 	for _, t := range realTopics {
 		t.RLock()
-		realChannels := make([]*Channel, 0, len(t.channelMap))
-		for _, c := range t.channelMap {
-			realChannels = append(realChannels, c)
+		var realChannels []*Channel
+		if channel == "" {
+			realChannels = make([]*Channel, 0, len(t.channelMap))
+			for _, c := range t.channelMap {
+				realChannels = append(realChannels, c)
+			}
+		} else if val, exists := t.channelMap[channel]; exists {
+			realChannels = []*Channel{val}
+		} else {
+			t.RUnlock()
+			continue
 		}
 		t.RUnlock()
 		sort.Sort(ChannelsByName{realChannels})
@@ -142,4 +166,43 @@ func (n *NSQD) GetStats() []TopicStats {
 		topics = append(topics, NewTopicStats(t, channels))
 	}
 	return topics
+}
+
+type memStats struct {
+	HeapObjects       uint64 `json:"heap_objects"`
+	HeapIdleBytes     uint64 `json:"heap_idle_bytes"`
+	HeapInUseBytes    uint64 `json:"heap_in_use_bytes"`
+	HeapReleasedBytes uint64 `json:"heap_released_bytes"`
+	GCPauseUsec100    uint64 `json:"gc_pause_usec_100"`
+	GCPauseUsec99     uint64 `json:"gc_pause_usec_99"`
+	GCPauseUsec95     uint64 `json:"gc_pause_usec_95"`
+	NextGCBytes       uint64 `json:"next_gc_bytes"`
+	GCTotalRuns       uint32 `json:"gc_total_runs"`
+}
+
+func getMemStats() memStats {
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+
+	// sort the GC pause array
+	length := len(ms.PauseNs)
+	if int(ms.NumGC) < length {
+		length = int(ms.NumGC)
+	}
+	gcPauses := make(Uint64Slice, length)
+	copy(gcPauses, ms.PauseNs[:length])
+	sort.Sort(gcPauses)
+
+	return memStats{
+		ms.HeapObjects,
+		ms.HeapIdle,
+		ms.HeapInuse,
+		ms.HeapReleased,
+		percentile(100.0, gcPauses, len(gcPauses)) / 1000,
+		percentile(99.0, gcPauses, len(gcPauses)) / 1000,
+		percentile(95.0, gcPauses, len(gcPauses)) / 1000,
+		ms.NextGC,
+		ms.NumGC,
+	}
+
 }
