@@ -1,3 +1,9 @@
+nsq (1.1.0) stable; urgency=low
+
+  * New upstream release
+
+ -- Misja Hoebe <misja.hoebe@pm.me>  Mon, 20 Aug 2018 13:46:39 +0200
+
 nsq (1.0.0-compat) stable; urgency=low
 
   * New upstream release

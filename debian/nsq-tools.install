@@ -1,5 +1,4 @@
 #!/usr/bin/dh-exec
-build/nsq_pubsub => /usr/bin/nsq_pubsub
 build/nsq_to_file => /usr/bin/nsq_to_file
 build/to_nsq => /usr/bin/to_nsq
 build/nsq_stat => /usr/bin/nsq_stat

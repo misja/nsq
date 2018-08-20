@@ -1,15 +1,13 @@
 #!/usr/bin/make -f
 
 export DH_OPTIONS
-export GOPATH=$(CURDIR)/.godeps:$(CURDIR)
-GODIR=src/github.com/nsqio
+export GOPATH=/tmp/build
+GODIR=$(GOPATH)/src/github.com/nsqio
 
 define get_go_deps
-    if [ ! -d $(CURDIR)/.godeps ]; then \
-        $(CURDIR)/debian/util/gpm install; \
-    fi
     if [ ! -d $(GODIR) ]; then \
-        mkdir -p $(GODIR); ln -s ../../../ $(GODIR)/nsq; \
+        mkdir -p $(GODIR); ln -s $(CURDIR) $(GODIR)/nsq; \
+		cd $(GODIR)/nsq; dep ensure -update; \
     fi
 endef
 
@@ -21,8 +19,7 @@ get-go-deps:
 	$(call get_go_deps)
 
 clean-go-deps:
-	rm -rf $(CURDIR)/src
-	rm -rf $(CURDIR)/.godeps
+	rm -rf $(GOPATH)
 
 override_dh_auto_build:
 	cd $(GODIR)/nsq && make CGO_ENABLED=1 GOFLAGS="-ldflags '-w -s'"
